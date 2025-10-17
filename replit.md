@@ -228,6 +228,14 @@ Auto-polling keeps status up-to-date in real-time without manual refresh.
 
 ## Recent Changes
 
+### 2025-10-17 (Video Preview & Export Enhancement)
+- **Video Preview Component**: Added inline video player with 9:16 aspect ratio for shorts
+- **Video Controls**: Play/pause, mute/unmute, and fullscreen controls on hover
+- **Manual Export**: Fully functional manual export with retry capability for failed exports
+- **Download Integration**: Seamless download from exported video srcUrl
+- **Export Retry**: Fixed button logic to allow retries when exports fail
+- **User Feedback**: Clear status indicators and button states for export workflow
+
 ### 2025-10-17 (Auto-Export Pipeline Update)
 - **Auto-Export Pipeline**: Complete automation of conversion + export in single run (like reference Node.js script)
 - **Database Schema**: Added auto-export tracking fields (autoExportRequested, autoExportStatus, autoExportError, autoExportCompletedAt)

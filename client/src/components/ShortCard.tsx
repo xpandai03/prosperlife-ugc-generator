@@ -84,7 +84,7 @@ export function ShortCard({ project, exportData, onExport, isExporting }: ShortC
         ) : onExport ? (
           <Button
             onClick={() => onExport(project.id)}
-            disabled={isProcessingExport || !!exportData}
+            disabled={isProcessingExport || (exportData?.status === "processing")}
             className="flex-1"
             size="sm"
             data-testid={`button-export-${project.id}`}
@@ -93,6 +93,8 @@ export function ShortCard({ project, exportData, onExport, isExporting }: ShortC
               <>Processing...</>
             ) : exportData?.status === "error" ? (
               <>Failed - Retry</>
+            ) : exportData?.status === "processing" ? (
+              <>Processing...</>
             ) : (
               <>Export Short</>
             )}
