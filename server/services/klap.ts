@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { apiLogs, type InsertApiLog } from "@shared/schema";
 
-const KLAP_API_URL = "https://api.klap.video/v2";
+const KLAP_API_URL = "https://api.klap.app/v2";
 const KLAP_API_KEY = process.env.KLAP_API_KEY;
 
 if (!KLAP_API_KEY) {
@@ -42,12 +42,15 @@ async function klapRequest<T = any>(options: KlapRequestOptions): Promise<T> {
     logEntry.statusCode = response.status;
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
+      const errorData = await response
+        .json()
+        .catch(() => ({ error: "Unknown error" }));
       logEntry.responseBody = errorData as any;
-      logEntry.errorMessage = errorData.error || errorData.message || `HTTP ${response.status}`;
-      
+      logEntry.errorMessage =
+        errorData.error || errorData.message || `HTTP ${response.status}`;
+
       await db.insert(apiLogs).values(logEntry);
-      
+
       throw new Error(logEntry.errorMessage);
     }
 
@@ -94,7 +97,10 @@ export interface ExportResponse {
 }
 
 export const klapService = {
-  async createVideoToShortsTask(sourceVideoUrl: string, taskId?: string): Promise<VideoToShortsResponse> {
+  async createVideoToShortsTask(
+    sourceVideoUrl: string,
+    taskId?: string,
+  ): Promise<VideoToShortsResponse> {
     return klapRequest<VideoToShortsResponse>({
       method: "POST",
       endpoint: "/tasks/video-to-shorts",
@@ -119,7 +125,10 @@ export const klapService = {
     });
   },
 
-  async getProjects(folderId: string, taskId?: string): Promise<ProjectResponse[]> {
+  async getProjects(
+    folderId: string,
+    taskId?: string,
+  ): Promise<ProjectResponse[]> {
     return klapRequest<ProjectResponse[]>({
       method: "GET",
       endpoint: `/projects/${folderId}`,
@@ -127,7 +136,11 @@ export const klapService = {
     });
   },
 
-  async createExport(folderId: string, projectId: string, taskId?: string): Promise<ExportResponse> {
+  async createExport(
+    folderId: string,
+    projectId: string,
+    taskId?: string,
+  ): Promise<ExportResponse> {
     return klapRequest<ExportResponse>({
       method: "POST",
       endpoint: `/projects/${folderId}/${projectId}/exports`,
@@ -136,7 +149,12 @@ export const klapService = {
     });
   },
 
-  async getExportStatus(folderId: string, projectId: string, exportId: string, taskId?: string): Promise<ExportResponse> {
+  async getExportStatus(
+    folderId: string,
+    projectId: string,
+    exportId: string,
+    taskId?: string,
+  ): Promise<ExportResponse> {
     return klapRequest<ExportResponse>({
       method: "GET",
       endpoint: `/projects/${folderId}/${projectId}/exports/${exportId}`,

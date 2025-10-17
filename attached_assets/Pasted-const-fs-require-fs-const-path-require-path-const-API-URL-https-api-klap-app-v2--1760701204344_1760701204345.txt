@@ -1,0 +1,230 @@
+const fs = require('fs');
+const path = require('path');
+
+
+const API_URL = "https://api.klap.app/v2";
+const API_KEY = "kak_vHVRyhIsXheSTnXfkkQJNxsd";
+const INPUT_VIDEO_URL = "https://www.youtube.com/watch?v=PZYCZvmLazQ";
+
+// Logger configuration
+const LOG_DIR = './api_logs';
+const SESSION_ID = new Date().toISOString().replace(/:/g, '-').split('.')[0];
+const SESSION_DIR = path.join(LOG_DIR, SESSION_ID);
+
+// Create log directory
+if (!fs.existsSync(LOG_DIR)) {
+  fs.mkdirSync(LOG_DIR, { recursive: true });
+}
+if (!fs.existsSync(SESSION_DIR)) {
+  fs.mkdirSync(SESSION_DIR, { recursive: true });
+}
+
+let requestCounter = 0;
+
+const saveLog = (filename, data) => {
+  const filepath = path.join(SESSION_DIR, filename);
+  fs.writeFileSync(filepath, JSON.stringify(data, null, 2), 'utf8');
+  console.log(`[LOG] Saved: ${filepath}`);
+};
+
+const logRequest = (method, endpoint, body = null) => {
+  requestCounter++;
+  const timestamp = new Date().toISOString();
+  const logData = {
+    request_number: requestCounter,
+    timestamp,
+    method,
+    endpoint,
+    full_url: `${API_URL}${endpoint}`,
+    body
+  };
+  
+  const filename = `${String(requestCounter).padStart(3, '0')}_${method}_request_${endpoint.replace(/\//g, '_')}.json`;
+  saveLog(filename, logData);
+  
+  return requestCounter;
+};
+
+const logResponse = (requestNum, method, endpoint, response, error = null) => {
+  const timestamp = new Date().toISOString();
+  const logData = {
+    request_number: requestNum,
+    timestamp,
+    method,
+    endpoint,
+    success: !error,
+    response,
+    error
+  };
+  
+  const filename = `${String(requestNum).padStart(3, '0')}_${method}_response_${endpoint.replace(/\//g, '_')}.json`;
+  saveLog(filename, logData);
+};
+
+const postRequest = async (url, body = {}) => {
+  const reqNum = logRequest('POST', url, body);
+  
+  try {
+    const response = await fetch(`${API_URL}${url}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify(body),
+    });
+    
+    const responseData = response.ok ? await response.json() : await response.json();
+    logResponse(reqNum, 'POST', url, responseData, response.ok ? null : 'Request failed');
+    
+    return response.ok ? responseData : Promise.reject(responseData);
+  } catch (error) {
+    logResponse(reqNum, 'POST', url, null, error.message);
+    throw error;
+  }
+};
+
+const getRequest = async (url) => {
+  const reqNum = logRequest('GET', url);
+  
+  try {
+    const response = await fetch(`${API_URL}${url}`, {
+      headers: { Authorization: `Bearer ${API_KEY}` },
+    });
+    
+    const responseData = await response.json();
+    logResponse(reqNum, 'GET', url, responseData);
+    
+    return responseData;
+  } catch (error) {
+    logResponse(reqNum, 'GET', url, null, error.message);
+    throw error;
+  }
+};
+
+const pollStatus = async (url, checkKey, checkValue) => {
+  let resJson;
+  let pollCount = 0;
+
+  do {
+    pollCount++;
+    resJson = await getRequest(url);
+    console.log(
+      `[${new Date().toLocaleTimeString()}] Poll #${pollCount}: ${url} - ${checkKey} = ${resJson[checkKey]}`
+    );
+    
+    if (resJson[checkKey] === checkValue) {
+      await new Promise((r) => setTimeout(r, 30000));
+    }
+  } while (resJson[checkKey] === checkValue);
+
+  return resJson;
+};
+
+const generateShorts = async (inputVideoUrl) => {
+  let task = await postRequest("/tasks/video-to-shorts", {
+    source_video_url: inputVideoUrl,
+    language: "en",
+    max_duration: 30,
+    max_clip_count: 2,
+    editing_options: {
+      intro_title: false,
+    },
+  });
+
+  console.log(`Task created: ${task.id}. Processing...`);
+  task = await pollStatus(`/tasks/${task.id}`, "status", "processing");
+  console.log(`Task processing done: ${task.id}.`);
+  if (task.status == "error") throw Error("Task processing failed.");
+
+  const projectFolderId = task.output_id;
+  console.log(`Result in folder: ${projectFolderId}`);
+
+  const projects = await getRequest(`/projects/${projectFolderId}`);
+  
+  // Save final projects list
+  saveLog('final_projects_list.json', {
+    timestamp: new Date().toISOString(),
+    folder_id: projectFolderId,
+    projects
+  });
+  
+  return projects;
+};
+
+const exportProject = async (folderId, projectId) => {
+  const project = await getRequest(`/projects/${folderId}/${projectId}`);
+  console.log(`Exporting project: ${project.id}...`);
+  
+  let exportRes = await postRequest(
+    `/projects/${folderId}/${project.id}/exports`,
+    {
+      watermark: {
+        src_url: "https://studio.restream.io/logos/default.png",
+        pos_x: 0.5,
+        pos_y: 0.5,
+        scale: 1,
+      },
+    }
+  );
+  
+  console.log(`Export started: ${exportRes.id}.`);
+  exportRes = await pollStatus(
+    `/projects/${folderId}/${project.id}/exports/${exportRes.id}`,
+    "status",
+    "processing"
+  );
+  
+  if (exportRes.status == "error") throw Error("Export failed.");
+  
+  // Save final export result
+  saveLog(`final_export_${projectId}.json`, {
+    timestamp: new Date().toISOString(),
+    project_id: projectId,
+    export: exportRes
+  });
+  
+  return exportRes;
+};
+
+const main = async () => {
+  console.log(`[LOG] Session started: ${SESSION_ID}`);
+  console.log(`[LOG] Logs will be saved to: ${SESSION_DIR}`);
+  
+  try {
+    const projects = await generateShorts(INPUT_VIDEO_URL);
+    console.log(`Generated ${projects.length} projects.`);
+    projects.forEach((project) =>
+      console.log(`"${project.name}" Virality Score: ${project.virality_score}`)
+    );
+
+    // export the first project
+    const project = projects[0];
+    const exportRes = await exportProject(project.folder_id, project.id);
+    console.log(`Export done: ${exportRes.src_url}.`);
+    
+    // Save session summary
+    saveLog('session_summary.json', {
+      session_id: SESSION_ID,
+      timestamp: new Date().toISOString(),
+      total_requests: requestCounter,
+      projects_generated: projects.length,
+      exported_project: {
+        id: project.id,
+        name: project.name,
+        export_url: exportRes.src_url
+      }
+    });
+    
+    console.log(`[LOG] Session complete. Total requests: ${requestCounter}`);
+  } catch (error) {
+    console.error('[ERROR]', error);
+    saveLog('error_log.json', {
+      timestamp: new Date().toISOString(),
+      error: error.message,
+      stack: error.stack
+    });
+  }
+};
+
+main();
