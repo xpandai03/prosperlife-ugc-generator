@@ -15,6 +15,7 @@ export const tasks = pgTable("tasks", {
   id: text("id").primaryKey(), // Klap task ID
   userId: integer("user_id").notNull().references(() => users.id),
   sourceVideoUrl: text("source_video_url").notNull(),
+  email: text("email"), // Email for completion notifications
   status: text("status").notNull(), // processing, ready, error
   outputId: text("output_id"), // folder_id when ready
   errorMessage: text("error_message"),
