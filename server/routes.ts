@@ -169,8 +169,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             task.outputId = klapStatus.output_id || null;
           }
 
-          // If completed, fetch and store projects
-          if (klapStatus.status === "complete" && klapStatus.output_id) {
+          // If ready, fetch and store projects
+          if (klapStatus.status === "ready" && klapStatus.output_id) {
             await fetchAndStoreProjects(taskId, klapStatus.output_id);
           }
         } catch (error) {
@@ -320,7 +320,7 @@ async function processVideoTask(taskId: string) {
         klapResponse: klapStatus as any,
       });
 
-      if (klapStatus.status === "complete") {
+      if (klapStatus.status === "ready") {
         if (klapStatus.output_id) {
           await fetchAndStoreProjects(taskId, klapStatus.output_id);
           
@@ -399,7 +399,7 @@ async function pollExportStatus(exportId: string, folderId: string, projectId: s
         klapResponse: exportStatus as any,
       });
 
-      if (exportStatus.status === "complete" || exportStatus.status === "error") {
+      if (exportStatus.status === "ready" || exportStatus.status === "error") {
         break;
       }
 
@@ -430,7 +430,7 @@ async function runAutoExportPipeline(taskId: string, folderId: string) {
     if (projects.length === 0) {
       console.log(`[Auto-Export] No projects found for task ${taskId}`);
       await storage.updateTask(taskId, {
-        autoExportStatus: "complete",
+        autoExportStatus: "ready",
         autoExportCompletedAt: new Date(),
       });
       return;
@@ -454,7 +454,7 @@ async function runAutoExportPipeline(taskId: string, folderId: string) {
 
         if (existingExport) {
           console.log(`[Auto-Export] Export already exists for project ${project.id}, skipping`);
-          if (existingExport.status === "complete") successCount++;
+          if (existingExport.status === "ready") successCount++;
           else if (existingExport.status === "error") errorCount++;
           continue;
         }
@@ -483,7 +483,7 @@ async function runAutoExportPipeline(taskId: string, folderId: string) {
 
         // Check final status
         const finalExport = await storage.getExport(exportData.id);
-        if (finalExport?.status === "complete") {
+        if (finalExport?.status === "ready") {
           successCount++;
           console.log(`[Auto-Export] Export ${i + 1}/${projects.length} completed successfully`);
         } else {
@@ -503,7 +503,7 @@ async function runAutoExportPipeline(taskId: string, folderId: string) {
     }
 
     // Update final task status
-    const finalStatus = errorCount === 0 ? "complete" : (successCount > 0 ? "partial_error" : "error");
+    const finalStatus = errorCount === 0 ? "ready" : (successCount > 0 ? "partial_error" : "error");
     const errorMessage = errorCount > 0 
       ? `${errorCount} of ${projects.length} exports failed`
       : null;
@@ -543,7 +543,7 @@ async function pollExportStatusSync(exportId: string, folderId: string, projectI
         klapResponse: exportStatus as any,
       });
 
-      if (exportStatus.status === "complete" || exportStatus.status === "error") {
+      if (exportStatus.status === "ready" || exportStatus.status === "error") {
         return exportStatus;
       }
 
@@ -590,9 +590,9 @@ async function processCompleteWorkflow(taskId: string) {
       
       console.log(`[Workflow] Task ${taskId} status: ${klapStatus.status}`);
       
-      if (klapStatus.status === "complete") {
+      if (klapStatus.status === "ready") {
         if (!klapStatus.output_id) {
-          throw new Error("Task complete but no output_id");
+          throw new Error("Task ready but no output_id");
         }
         
         const folderId = klapStatus.output_id;
@@ -644,12 +644,12 @@ async function processCompleteWorkflow(taskId: string) {
           taskId
         );
         
-        if (finalExport.status === "complete") {
+        if (finalExport.status === "ready") {
           const srcUrl = 'src_url' in finalExport ? finalExport.src_url : null;
           console.log(`[Workflow] Export complete! URL: ${srcUrl}`);
           
           await storage.updateTask(taskId, {
-            autoExportStatus: "complete",
+            autoExportStatus: "ready",
             autoExportCompletedAt: new Date(),
           });
         } else {
