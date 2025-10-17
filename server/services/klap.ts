@@ -191,7 +191,7 @@ export const klapService = {
     // Step 2: Poll task status until complete
     let pollCount = 0;
     while (task.status === "processing") {
-      await new Promise((resolve) => setTimeout(resolve, 30000)); // Wait 30 seconds
+      await new Promise((resolve) => setTimeout(resolve, 30000));
       pollCount++;
       
       task = await klapRequest<TaskStatusResponse>({
@@ -236,7 +236,7 @@ export const klapService = {
     // Step 5: Poll export status until complete
     pollCount = 0;
     while (exportRes.status === "processing") {
-      await new Promise((resolve) => setTimeout(resolve, 30000)); // Wait 30 seconds
+      await new Promise((resolve) => setTimeout(resolve, 30000));
       pollCount++;
       
       exportRes = await klapRequest<ExportResponse>({
