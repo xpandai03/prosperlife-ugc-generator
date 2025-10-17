@@ -19,6 +19,10 @@ export const tasks = pgTable("tasks", {
   outputId: text("output_id"), // folder_id when complete
   errorMessage: text("error_message"),
   klapResponse: jsonb("klap_response"), // Full Klap API response
+  autoExportRequested: text("auto_export_requested").default("false").notNull(), // false, true
+  autoExportStatus: text("auto_export_status"), // pending, processing, complete, partial_error, error
+  autoExportError: text("auto_export_error"),
+  autoExportCompletedAt: timestamp("auto_export_completed_at"),
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
   updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
 });
@@ -47,10 +51,12 @@ export const exports = pgTable("exports", {
   id: text("id").primaryKey(), // Klap export ID
   projectId: text("project_id").notNull().references(() => projects.id),
   folderId: text("folder_id").notNull(),
+  taskId: text("task_id").notNull().references(() => tasks.id), // Link to task for easier querying
   status: text("status").notNull(), // processing, complete, error
   srcUrl: text("src_url"), // Download URL when complete
   errorMessage: text("error_message"),
   klapResponse: jsonb("klap_response"), // Full Klap API response
+  isAutoExport: text("is_auto_export").default("false").notNull(), // true if auto-triggered, false if manual
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
   updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
 });
