@@ -290,7 +290,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // POST /api/process-video - Simple one-click workflow following exact script pattern
   app.post("/api/process-video", async (req, res) => {
     try {
-      const { url } = z.object({ url: z.string().url() }).parse(req.body);
+      const { url, email } = z.object({ 
+        url: z.string().url(),
+        email: z.string().email().optional()
+      }).parse(req.body);
 
       // Step 1: Create task via Klap API
       const klapTask = await klapService.createVideoToShortsTask(url);
@@ -300,6 +303,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         id: klapTask.id,
         userId: DEFAULT_USER_ID,
         sourceVideoUrl: url,
+        email: email || null,
         status: klapTask.status,
         outputId: null,
         errorMessage: null,
