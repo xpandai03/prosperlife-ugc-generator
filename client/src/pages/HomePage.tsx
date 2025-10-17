@@ -17,6 +17,7 @@ import { apiRequest } from "@/lib/queryClient";
 
 export default function HomePage() {
   const [urls, setUrls] = useState("");
+  const [email, setEmail] = useState("");
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
@@ -118,6 +119,22 @@ export default function HomePage() {
                 <p className="text-xs text-muted-foreground">
                   Supports YouTube, S3, Google Cloud Storage, and public
                   HTTP/HTTPS URLs
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="email">Email (Optional)</Label>
+                <input
+                  id="email"
+                  type="email"
+                  placeholder="your@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  data-testid="input-email"
+                />
+                <p className="text-xs text-muted-foreground">
+                  We'll notify you when your video is ready
                 </p>
               </div>
 
