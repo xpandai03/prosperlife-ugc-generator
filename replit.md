@@ -228,6 +228,14 @@ Auto-polling keeps status up-to-date in real-time without manual refresh.
 
 ## Recent Changes
 
+### 2025-10-17 (Email Notification Feature)
+- **Email Input Field**: Added optional email input on homepage for completion notifications
+- **Database Schema**: Added `email` field to tasks table to store user email addresses
+- **Dynamic Email Notifications**: Updated processCompleteWorkflow to send notifications to user-provided email
+- **Completion Links**: Email includes direct link to video details page (format: https://{domain}/details/{taskId})
+- **Error Handling**: Graceful email sending with error logging, doesn't block workflow on failure
+- **User Experience**: Optional field with clear messaging about notification purpose
+
 ### 2025-10-17 (Video Preview & Export Enhancement)
 - **Video Preview Component**: Added inline video player with 9:16 aspect ratio for shorts
 - **Video Controls**: Play/pause, mute/unmute, and fullscreen controls on hover
