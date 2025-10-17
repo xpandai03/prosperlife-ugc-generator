@@ -2,29 +2,48 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Video, Sparkles, Zap, TrendingUp } from "lucide-react";
+import { Video, Sparkles, Zap, TrendingUp, ListVideo } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 
 export default function HomePage() {
-  const [url, setUrl] = useState("");
+  const [urls, setUrls] = useState("");
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
-  const createVideoMutation = useMutation({
-    mutationFn: async (sourceVideoUrl: string) => {
-      const response = await apiRequest("POST", "/api/videos", { sourceVideoUrl });
-      return response as { taskId: string; status: string };
+  const createBulkVideoMutation = useMutation({
+    mutationFn: async (videoUrls: string[]) => {
+      const response = await apiRequest("POST", "/api/videos/bulk", { urls: videoUrls });
+      return response as { 
+        tasks: Array<{ taskId: string; status: string; url: string }>, 
+        failures: Array<{ url: string; error: string }>,
+        successCount: number, 
+        failureCount: number 
+      };
     },
     onSuccess: (data) => {
-      toast({
-        title: "Processing Started",
-        description: "Your video is being analyzed to create viral shorts.",
-      });
-      setLocation(`/details/${data.taskId}`);
+      const { successCount, failureCount, failures } = data;
+      
+      if (failureCount > 0 && failures && failures.length > 0) {
+        // Show detailed error for failures
+        const failedUrls = failures.map(f => f.url).join(', ');
+        toast({
+          title: `Partially Successful`,
+          description: `${successCount} video${successCount !== 1 ? 's' : ''} submitted. ${failureCount} failed: ${failedUrls.substring(0, 50)}${failedUrls.length > 50 ? '...' : ''}`,
+          variant: failureCount === data.tasks.length + failureCount ? "destructive" : "default",
+        });
+      } else {
+        toast({
+          title: `Processing Started`,
+          description: `${successCount} video${successCount !== 1 ? 's' : ''} submitted successfully.`,
+        });
+      }
+      
+      setUrls("");
+      setLocation("/videos");
     },
     onError: (error: any) => {
       toast({
@@ -38,26 +57,45 @@ export default function HomePage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!url.trim()) {
+    if (!urls.trim()) {
       toast({
-        title: "URL Required",
-        description: "Please enter a video URL to continue.",
+        title: "URLs Required",
+        description: "Please enter at least one video URL.",
         variant: "destructive",
       });
       return;
     }
 
-    if (!url.match(/^https?:\/\/.+/)) {
+    // Parse URLs (one per line)
+    const urlList = urls
+      .split('\n')
+      .map(url => url.trim())
+      .filter(url => url.length > 0);
+
+    if (urlList.length === 0) {
       toast({
-        title: "Invalid URL",
-        description: "Please enter a valid HTTP/HTTPS URL.",
+        title: "No Valid URLs",
+        description: "Please enter at least one valid URL.",
         variant: "destructive",
       });
       return;
     }
 
-    createVideoMutation.mutate(url);
+    // Validate all URLs
+    const invalidUrls = urlList.filter(url => !url.match(/^https?:\/\/.+/));
+    if (invalidUrls.length > 0) {
+      toast({
+        title: "Invalid URLs",
+        description: `${invalidUrls.length} URL${invalidUrls.length !== 1 ? 's are' : ' is'} invalid. Please use HTTP/HTTPS URLs.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    createBulkVideoMutation.mutate(urlList);
   };
+
+  const urlCount = urls.split('\n').filter(url => url.trim().length > 0).length;
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-6">
@@ -76,41 +114,50 @@ export default function HomePage() {
 
         <Card data-testid="card-url-input">
           <CardHeader>
-            <CardTitle>Submit Video URL</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <ListVideo className="h-5 w-5" />
+              Submit Video URLs
+            </CardTitle>
             <CardDescription>
-              Enter a YouTube URL or direct video link to generate short clips
+              Enter one or more video URLs (one per line) to generate short clips
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="space-y-2">
-                <Label htmlFor="video-url">Video URL</Label>
-                <Input
-                  id="video-url"
-                  type="url"
-                  placeholder="https://www.youtube.com/watch?v=..."
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  className="h-12 text-base"
-                  data-testid="input-video-url"
+                <Label htmlFor="video-urls">Video URLs</Label>
+                <Textarea
+                  id="video-urls"
+                  placeholder="https://www.youtube.com/watch?v=...&#10;https://www.youtube.com/watch?v=...&#10;https://youtu.be/..."
+                  value={urls}
+                  onChange={(e) => setUrls(e.target.value)}
+                  className="min-h-32 text-base font-mono resize-y"
+                  data-testid="input-video-urls"
                 />
-                <p className="text-xs text-muted-foreground">
-                  Supports YouTube, S3, Google Cloud Storage, and public HTTP/HTTPS URLs
-                </p>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Supports YouTube, S3, Google Cloud Storage, and public HTTP/HTTPS URLs
+                  </p>
+                  {urlCount > 0 && (
+                    <p className="text-xs font-medium text-primary">
+                      {urlCount} URL{urlCount !== 1 ? 's' : ''}
+                    </p>
+                  )}
+                </div>
               </div>
 
               <Button
                 type="submit"
                 className="w-full h-12 text-base"
-                disabled={createVideoMutation.isPending}
-                data-testid="button-submit-url"
+                disabled={createBulkVideoMutation.isPending}
+                data-testid="button-submit-urls"
               >
-                {createVideoMutation.isPending ? (
-                  <>Processing...</>
+                {createBulkVideoMutation.isPending ? (
+                  <>Processing {urlCount} video{urlCount !== 1 ? 's' : ''}...</>
                 ) : (
                   <>
                     <Sparkles className="h-5 w-5 mr-2" />
-                    Generate Shorts
+                    Generate Shorts {urlCount > 0 ? `(${urlCount})` : ''}
                   </>
                 )}
               </Button>
@@ -130,9 +177,9 @@ export default function HomePage() {
             <p className="text-xs text-muted-foreground">Ranked by engagement potential</p>
           </div>
           <div className="text-center p-4 rounded-lg bg-card border border-card-border">
-            <Video className="h-6 w-6 text-primary mx-auto mb-2" />
-            <h3 className="text-sm font-medium text-foreground mb-1">Export Ready</h3>
-            <p className="text-xs text-muted-foreground">Download in high quality</p>
+            <ListVideo className="h-6 w-6 text-primary mx-auto mb-2" />
+            <h3 className="text-sm font-medium text-foreground mb-1">Bulk Processing</h3>
+            <p className="text-xs text-muted-foreground">Submit multiple videos at once</p>
           </div>
         </div>
       </div>

@@ -11,6 +11,10 @@ const createVideoSchema = z.object({
   sourceVideoUrl: z.string().url(),
 });
 
+const createBulkVideoSchema = z.object({
+  urls: z.array(z.string().url()).min(1, "At least one URL is required"),
+});
+
 const exportVideoSchema = z.object({
   projectId: z.string(),
 });
@@ -57,6 +61,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error creating video task:", error);
       res.status(400).json({ error: error.message || "Failed to create video task" });
+    }
+  });
+
+  // POST /api/videos/bulk - Create multiple video processing tasks
+  app.post("/api/videos/bulk", async (req, res) => {
+    try {
+      const { urls } = createBulkVideoSchema.parse(req.body);
+
+      const results = await Promise.allSettled(
+        urls.map(async (url) => {
+          try {
+            const klapResponse = await klapService.createVideoToShortsTask(url);
+            
+            const task = await storage.createTask({
+              id: klapResponse.id,
+              userId: DEFAULT_USER_ID,
+              sourceVideoUrl: url,
+              status: klapResponse.status,
+              outputId: klapResponse.output_id || null,
+              errorMessage: null,
+              klapResponse: klapResponse as any,
+            });
+
+            // Start background processing
+            processVideoTask(task.id).catch(console.error);
+
+            return { taskId: task.id, status: task.status, url, success: true };
+          } catch (error: any) {
+            console.error(`Error creating task for ${url}:`, error);
+            return { url, success: false, error: error.message || "Failed to create task" };
+          }
+        })
+      );
+
+      const tasks = [];
+      const failures = [];
+      let successCount = 0;
+      let failureCount = 0;
+
+      for (const result of results) {
+        if (result.status === "fulfilled") {
+          if (result.value.success) {
+            tasks.push(result.value);
+            successCount++;
+          } else {
+            failures.push(result.value);
+            failureCount++;
+          }
+        } else {
+          failureCount++;
+        }
+      }
+
+      res.json({ 
+        tasks, 
+        failures,
+        successCount, 
+        failureCount,
+        total: urls.length 
+      });
+    } catch (error: any) {
+      console.error("Error creating bulk video tasks:", error);
+      res.status(400).json({ error: error.message || "Failed to create bulk video tasks" });
     }
   });
 
