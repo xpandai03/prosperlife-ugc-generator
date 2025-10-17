@@ -33,6 +33,7 @@ export default function VideoDetailPage() {
       if (!data) return false;
       
       const hasProcessing = data.task.status === "processing" || 
+                           data.task.autoExportStatus === "processing" ||
                            data.exports.some(e => e.status === "processing");
       
       setIsPolling(hasProcessing);
@@ -90,6 +91,31 @@ export default function VideoDetailPage() {
   }
 
   const { task, projects, exports } = data;
+  
+  // Determine unified pipeline status
+  const isAutoExport = task.autoExportRequested === "true";
+  const getPipelineStatus = () => {
+    if (task.status === "processing") return "Converting video...";
+    if (task.status === "error") return "Conversion failed";
+    
+    if (isAutoExport) {
+      if (task.autoExportStatus === "processing") {
+        const completedExports = exports.filter(e => e.status === "complete").length;
+        const totalExports = projects.length;
+        return totalExports > 0 ? `Exporting ${completedExports}/${totalExports} shorts...` : "Exporting...";
+      }
+      if (task.autoExportStatus === "complete") return "All shorts ready for download";
+      if (task.autoExportStatus === "partial_error") return "Some exports failed";
+      if (task.autoExportStatus === "error") return "Export failed";
+      if (task.autoExportStatus === "pending" && task.status === "complete") return "Starting auto-export...";
+    }
+    
+    if (task.status === "complete") return "Conversion complete";
+    return task.status;
+  };
+
+  const pipelineStatus = getPipelineStatus();
+  const showExportButtons = !isAutoExport && task.status === "complete";
 
   return (
     <div className="min-h-screen bg-background">
@@ -107,21 +133,43 @@ export default function VideoDetailPage() {
           <CardHeader>
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
-                <CardTitle className="mb-2">Video Processing Status</CardTitle>
+                <CardTitle className="mb-2">
+                  {isAutoExport ? "Auto-Convert & Export" : "Video Processing Status"}
+                </CardTitle>
                 <CardDescription className="font-mono text-xs break-all">
                   {task.sourceVideoUrl}
                 </CardDescription>
               </div>
-              <StatusBadge status={task.status} />
+              {isAutoExport && task.autoExportStatus ? (
+                <StatusBadge status={task.autoExportStatus} />
+              ) : (
+                <StatusBadge status={task.status} />
+              )}
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
-            <ProgressBar status={task.status} />
+            {isAutoExport ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-foreground">{pipelineStatus}</p>
+                  {task.autoExportStatus === "processing" && (
+                    <p className="text-xs text-muted-foreground">
+                      {exports.filter(e => e.status === "complete").length} of {projects.length} complete
+                    </p>
+                  )}
+                </div>
+                <ProgressBar 
+                  status={task.autoExportStatus === "complete" || task.autoExportStatus === "partial_error" ? "complete" : "processing"} 
+                />
+              </div>
+            ) : (
+              <ProgressBar status={task.status} />
+            )}
             
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
-                <p className="text-xs text-muted-foreground mb-1">Status</p>
-                <p className="text-sm font-medium text-foreground capitalize">{task.status}</p>
+                <p className="text-xs text-muted-foreground mb-1">Pipeline Status</p>
+                <p className="text-sm font-medium text-foreground capitalize">{pipelineStatus}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Submitted</p>
@@ -134,15 +182,31 @@ export default function VideoDetailPage() {
                 <p className="text-sm font-medium text-foreground font-mono">{task.id.substring(0, 12)}...</p>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground mb-1">Shorts Generated</p>
+                <p className="text-xs text-muted-foreground mb-1">
+                  {isAutoExport && task.autoExportStatus === "complete" ? "Ready to Download" : "Shorts Generated"}
+                </p>
                 <p className="text-sm font-medium text-foreground">{projects.length}</p>
               </div>
             </div>
 
             {task.status === "error" && task.errorMessage && (
               <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20">
-                <p className="text-sm text-destructive font-medium mb-1">Error Details</p>
+                <p className="text-sm text-destructive font-medium mb-1">Conversion Error</p>
                 <p className="text-sm text-destructive/80">{task.errorMessage}</p>
+              </div>
+            )}
+
+            {isAutoExport && task.autoExportStatus === "error" && task.autoExportError && (
+              <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20">
+                <p className="text-sm text-destructive font-medium mb-1">Export Error</p>
+                <p className="text-sm text-destructive/80">{task.autoExportError}</p>
+              </div>
+            )}
+
+            {isAutoExport && task.autoExportStatus === "partial_error" && task.autoExportError && (
+              <div className="p-4 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                <p className="text-sm text-amber-600 dark:text-amber-500 font-medium mb-1">Partial Export Success</p>
+                <p className="text-sm text-amber-600/80 dark:text-amber-500/80">{task.autoExportError}</p>
               </div>
             )}
 
@@ -167,7 +231,7 @@ export default function VideoDetailPage() {
                     key={project.id}
                     project={project}
                     exportData={exportData}
-                    onExport={exportMutation.mutate}
+                    onExport={showExportButtons ? exportMutation.mutate : undefined}
                     isExporting={exportMutation.isPending && exportMutation.variables === project.id}
                   />
                 );

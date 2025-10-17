@@ -16,7 +16,10 @@ export default function HomePage() {
 
   const createBulkVideoMutation = useMutation({
     mutationFn: async (videoUrls: string[]) => {
-      const response = await apiRequest("POST", "/api/videos/bulk", { urls: videoUrls });
+      const response = await apiRequest("POST", "/api/videos/bulk", { 
+        urls: videoUrls,
+        autoExport: true // Enable auto-export by default
+      });
       return response as { 
         tasks: Array<{ taskId: string; status: string; url: string }>, 
         failures: Array<{ url: string; error: string }>,

@@ -106,13 +106,15 @@ All requests/responses are logged to `api_logs` table for debugging.
 
 ### Key Features
 
+- **Auto-Export Pipeline**: Automatic conversion + export in single run (convert video → generate shorts → export all shorts → ready to download)
 - **Bulk Video Processing**: Submit multiple YouTube URLs simultaneously (1-1000 videos)
 - **Parallel Task Creation**: Processes all submissions in parallel with detailed failure reporting
+- **Unified Progress Tracking**: Shows complete pipeline status (Converting → Exporting 1/N → Complete)
 - **Auto-Polling**: Detail page automatically polls backend when processing or exporting
-- **Status Badges**: Color-coded status indicators (pending, processing, complete, error)
-- **Progress Visualization**: Progress bars and step indicators for task status
+- **Status Badges**: Color-coded status indicators (pending, processing, complete, error, partial_error)
+- **Progress Visualization**: Progress bars and step indicators for complete pipeline status
 - **Virality Scores**: Each short displays its viral potential score (0-100)
-- **Export Management**: Track multiple exports per video with individual status
+- **Intelligent Export Management**: Auto-export for hands-free workflow or manual export for selective control
 - **Error Handling**: Comprehensive error states with user-friendly messages, including partial failure details
 - **Responsive Design**: Works on desktop, tablet, and mobile devices
 
@@ -192,24 +194,48 @@ See `design_guidelines.md` for complete design specifications.
 
 ## Workflow
 
-### User Journey
+### User Journey (Auto-Export Mode - Default)
 
-1. **Submit Video**: User enters YouTube URL or direct video link
+1. **Submit Video**: User enters YouTube URL(s) with auto-export enabled (default)
+2. **Converting**: Video is analyzed by Klap AI and converted to shorts (can take several minutes)
+3. **Auto-Exporting**: System automatically exports ALL generated shorts sequentially
+4. **Download**: All shorts are ready to download immediately when pipeline completes
+
+### User Journey (Manual Export Mode)
+
+1. **Submit Video**: User enters YouTube URL with auto-export disabled
 2. **Processing**: Video is analyzed by Klap AI (can take several minutes)
 3. **View Shorts**: Generated clips appear with virality scores
-4. **Export**: User selects shorts to export in high quality
+4. **Export**: User selects specific shorts to export in high quality
 5. **Download**: Export URLs become available for download
 
 ### Status Flow
 
+**Auto-Export Pipeline**:
 ```
-Task: pending → processing → complete/error
-Export: pending → processing → complete/error
+Task: processing → complete
+Auto-Export: pending → processing → complete/partial_error/error
+Each Export: pending → processing → complete/error
+```
+
+**Manual Export Flow**:
+```
+Task: processing → complete/error
+Export (per short): user triggers → processing → complete/error
 ```
 
 Auto-polling keeps status up-to-date in real-time without manual refresh.
 
 ## Recent Changes
+
+### 2025-10-17 (Auto-Export Pipeline Update)
+- **Auto-Export Pipeline**: Complete automation of conversion + export in single run (like reference Node.js script)
+- **Database Schema**: Added auto-export tracking fields (autoExportRequested, autoExportStatus, autoExportError, autoExportCompletedAt)
+- **Background Processing**: runAutoExportPipeline() automatically exports all shorts after conversion completes
+- **Sequential Export**: Exports process one by one with status tracking for each
+- **Unified Progress UI**: Shows pipeline status (Converting → Exporting X/N → Complete) in real-time
+- **Partial Failure Handling**: Tracks which exports succeed/fail, shows detailed error messages
+- **Backward Compatible**: Auto-export defaults to true for new submissions, can be disabled for manual control
 
 ### 2025-10-17 (Bulk Processing Update)
 - **Bulk Video Processing**: Added support for submitting multiple URLs simultaneously

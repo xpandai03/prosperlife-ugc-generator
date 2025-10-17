@@ -9,10 +9,12 @@ const DEFAULT_USER_ID = 1; // Admin user
 // Validation schemas
 const createVideoSchema = z.object({
   sourceVideoUrl: z.string().url(),
+  autoExport: z.boolean().optional().default(false),
 });
 
 const createBulkVideoSchema = z.object({
   urls: z.array(z.string().url()).min(1, "At least one URL is required"),
+  autoExport: z.boolean().optional().default(false),
 });
 
 const exportVideoSchema = z.object({
@@ -39,7 +41,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // POST /api/videos - Create video processing task and start processing
   app.post("/api/videos", async (req, res) => {
     try {
-      const { sourceVideoUrl } = createVideoSchema.parse(req.body);
+      const { sourceVideoUrl, autoExport } = createVideoSchema.parse(req.body);
 
       // Create initial task record
       const klapResponse = await klapService.createVideoToShortsTask(sourceVideoUrl);
@@ -52,12 +54,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         outputId: klapResponse.output_id || null,
         errorMessage: null,
         klapResponse: klapResponse as any,
+        autoExportRequested: autoExport ? "true" : "false",
+        autoExportStatus: autoExport ? "pending" : null,
       });
 
       // Start background processing
       processVideoTask(task.id).catch(console.error);
 
-      res.json({ taskId: task.id, status: task.status });
+      res.json({ taskId: task.id, status: task.status, autoExport });
     } catch (error: any) {
       console.error("Error creating video task:", error);
       res.status(400).json({ error: error.message || "Failed to create video task" });
@@ -67,7 +71,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // POST /api/videos/bulk - Create multiple video processing tasks
   app.post("/api/videos/bulk", async (req, res) => {
     try {
-      const { urls } = createBulkVideoSchema.parse(req.body);
+      const { urls, autoExport } = createBulkVideoSchema.parse(req.body);
 
       const results = await Promise.allSettled(
         urls.map(async (url) => {
@@ -82,6 +86,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               outputId: klapResponse.output_id || null,
               errorMessage: null,
               klapResponse: klapResponse as any,
+              autoExportRequested: autoExport ? "true" : "false",
+              autoExportStatus: autoExport ? "pending" : null,
             });
 
             // Start background processing
@@ -243,10 +249,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         id: exportResponse.id,
         projectId,
         folderId: project.folderId,
+        taskId,
         status: exportResponse.status,
         srcUrl: exportResponse.src_url || null,
         errorMessage: exportResponse.error || null,
         klapResponse: exportResponse as any,
+        isAutoExport: "false",
       });
 
       // Start polling export status
@@ -284,6 +292,13 @@ async function processVideoTask(taskId: string) {
       if (klapStatus.status === "complete") {
         if (klapStatus.output_id) {
           await fetchAndStoreProjects(taskId, klapStatus.output_id);
+          
+          // Check if auto-export was requested
+          const task = await storage.getTask(taskId);
+          if (task && task.autoExportRequested === "true") {
+            console.log(`Auto-export requested for task ${taskId}, starting pipeline...`);
+            runAutoExportPipeline(taskId, klapStatus.output_id).catch(console.error);
+          }
         }
         break;
       } else if (klapStatus.status === "error") {
@@ -365,5 +380,158 @@ async function pollExportStatus(exportId: string, folderId: string, projectId: s
       status: "error",
       errorMessage: error instanceof Error ? error.message : "Export polling failed",
     });
+  }
+}
+
+// Auto-export pipeline - exports all projects automatically after task completes
+async function runAutoExportPipeline(taskId: string, folderId: string) {
+  try {
+    console.log(`[Auto-Export] Starting pipeline for task ${taskId}`);
+    
+    // Update task status
+    await storage.updateTask(taskId, {
+      autoExportStatus: "processing",
+    });
+
+    // Get all projects for this task
+    const projects = await storage.getProjectsByTask(taskId);
+    
+    if (projects.length === 0) {
+      console.log(`[Auto-Export] No projects found for task ${taskId}`);
+      await storage.updateTask(taskId, {
+        autoExportStatus: "complete",
+        autoExportCompletedAt: new Date(),
+      });
+      return;
+    }
+
+    console.log(`[Auto-Export] Found ${projects.length} projects to export`);
+
+    const exportResults = [];
+    let successCount = 0;
+    let errorCount = 0;
+
+    // Export each project sequentially
+    for (let i = 0; i < projects.length; i++) {
+      const project = projects[i];
+      console.log(`[Auto-Export] Exporting project ${i + 1}/${projects.length}: ${project.id}`);
+
+      try {
+        // Check if export already exists
+        const existingExports = await storage.getExportsByTask(taskId);
+        const existingExport = existingExports.find(e => e.projectId === project.id);
+
+        if (existingExport) {
+          console.log(`[Auto-Export] Export already exists for project ${project.id}, skipping`);
+          if (existingExport.status === "complete") successCount++;
+          else if (existingExport.status === "error") errorCount++;
+          continue;
+        }
+
+        // Create export
+        const exportResponse = await klapService.createExport(
+          project.folderId,
+          project.id,
+          taskId
+        );
+
+        const exportData = await storage.createExport({
+          id: exportResponse.id,
+          projectId: project.id,
+          folderId: project.folderId,
+          taskId,
+          status: exportResponse.status,
+          srcUrl: exportResponse.src_url || null,
+          errorMessage: exportResponse.error || null,
+          klapResponse: exportResponse as any,
+          isAutoExport: "true",
+        });
+
+        // Poll export status synchronously (wait for completion)
+        await pollExportStatusSync(exportData.id, project.folderId, project.id, taskId);
+
+        // Check final status
+        const finalExport = await storage.getExport(exportData.id);
+        if (finalExport?.status === "complete") {
+          successCount++;
+          console.log(`[Auto-Export] Export ${i + 1}/${projects.length} completed successfully`);
+        } else {
+          errorCount++;
+          console.log(`[Auto-Export] Export ${i + 1}/${projects.length} failed`);
+        }
+
+        exportResults.push({ projectId: project.id, exportId: exportData.id, status: finalExport?.status });
+      } catch (error) {
+        errorCount++;
+        console.error(`[Auto-Export] Error exporting project ${project.id}:`, error);
+        exportResults.push({ 
+          projectId: project.id, 
+          error: error instanceof Error ? error.message : "Export failed" 
+        });
+      }
+    }
+
+    // Update final task status
+    const finalStatus = errorCount === 0 ? "complete" : (successCount > 0 ? "partial_error" : "error");
+    const errorMessage = errorCount > 0 
+      ? `${errorCount} of ${projects.length} exports failed`
+      : null;
+
+    await storage.updateTask(taskId, {
+      autoExportStatus: finalStatus,
+      autoExportError: errorMessage,
+      autoExportCompletedAt: new Date(),
+    });
+
+    console.log(`[Auto-Export] Pipeline complete for task ${taskId}: ${successCount} succeeded, ${errorCount} failed`);
+  } catch (error) {
+    console.error(`[Auto-Export] Pipeline failed for task ${taskId}:`, error);
+    await storage.updateTask(taskId, {
+      autoExportStatus: "error",
+      autoExportError: error instanceof Error ? error.message : "Auto-export pipeline failed",
+      autoExportCompletedAt: new Date(),
+    });
+  }
+}
+
+// Synchronous export polling (waits for completion)
+async function pollExportStatusSync(exportId: string, folderId: string, projectId: string, taskId: string) {
+  try {
+    let attempts = 0;
+    const maxAttempts = 40; // 10 minutes (15 second intervals)
+
+    while (attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 15000)); // Wait 15 seconds
+
+      const exportStatus = await klapService.getExportStatus(folderId, projectId, exportId, taskId);
+      
+      await storage.updateExport(exportId, {
+        status: exportStatus.status,
+        srcUrl: exportStatus.src_url || null,
+        errorMessage: exportStatus.error || null,
+        klapResponse: exportStatus as any,
+      });
+
+      if (exportStatus.status === "complete" || exportStatus.status === "error") {
+        return exportStatus;
+      }
+
+      attempts++;
+    }
+
+    // Timeout
+    await storage.updateExport(exportId, {
+      status: "error",
+      errorMessage: "Export timeout after 10 minutes",
+    });
+
+    return { status: "error", error: "Export timeout" };
+  } catch (error) {
+    console.error("Error polling export status:", error);
+    await storage.updateExport(exportId, {
+      status: "error",
+      errorMessage: error instanceof Error ? error.message : "Export polling failed",
+    });
+    throw error;
   }
 }
