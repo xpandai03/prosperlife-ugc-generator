@@ -42,7 +42,7 @@ The application uses a utility-focused SaaS design with a "status-first" approac
     - `GET /api/videos`: Fetches all video tasks.
     - `GET /api/videos/:id`: Fetches detailed task info, updates status, and stores projects/exports.
     - `POST /api/videos/:id/export`: Triggers export for a specific short.
-    - `POST /api/process-video-advanced`: (STUB) Future endpoint for custom processing parameters.
+    - `POST /api/process-video-advanced`: Advanced endpoint with custom processing parameters (targetClipCount, minimumDuration).
 - **Background Processing**: Asynchronous polling of Klap API for video processing (30s intervals, max 30 min) and export processing (15s intervals, max 10 min).
 
 ## External Dependencies

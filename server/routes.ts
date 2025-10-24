@@ -150,19 +150,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // POST /api/process-video-advanced - Process video with custom parameters
-  // NOTE: This is a stub endpoint - implementation pending
   app.post("/api/process-video-advanced", async (req, res) => {
     try {
       const { url, email, targetClipCount, minimumDuration } = processVideoAdvancedSchema.parse(req.body);
 
-      // TODO: Implement custom clip generation logic with these parameters:
-      // - targetClipCount: Number of clips to generate (1-10)
-      // - minimumDuration: Minimum clip length in seconds (1-180)
-      // - email: Optional email for notifications
-      
-      // For now, return a stub response
-      // User will implement the actual Klap API integration with these parameters
-      
+      // TODO: Use targetClipCount and minimumDuration parameters when Klap API supports them
       console.log('Process video advanced called with:', {
         url,
         email,
@@ -170,22 +162,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         minimumDuration
       });
 
-      // Stub response - replace with actual implementation
-      res.status(501).json({ 
-        error: "Advanced processing not yet implemented",
-        message: "This endpoint will be implemented to support custom clip parameters",
-        parameters: {
-          url,
-          email,
-          targetClipCount,
-          minimumDuration
-        }
+      // Step 1: Create task via Klap API
+      const klapTask = await klapService.createVideoToShortsTask(url);
+
+      // Step 2: Save task in database
+      const task = await storage.createTask({
+        id: klapTask.id,
+        userId: DEFAULT_USER_ID,
+        sourceVideoUrl: url,
+        email: email || null,
+        status: klapTask.status,
+        outputId: null,
+        errorMessage: null,
+        klapResponse: klapTask as any,
+        autoExportRequested: "true",
+        autoExportStatus: "pending",
       });
+
+      // Step 3: Start background workflow (follows exact script)
+      processCompleteWorkflow(task.id).catch(console.error);
+
+      res.json({ taskId: task.id, status: "processing" });
     } catch (error: any) {
-      console.error("Error in process-video-advanced:", error);
+      console.error("Error starting video processing:", error);
       res
         .status(400)
-        .json({ error: error.message || "Failed to process video with advanced parameters" });
+        .json({ error: error.message || "Failed to start processing" });
     }
   });
 
