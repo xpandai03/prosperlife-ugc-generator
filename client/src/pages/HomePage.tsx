@@ -10,22 +10,50 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
 import { Video, Sparkles, Zap, TrendingUp, ListVideo } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 
+// Slider configuration constants
+const CLIP_COUNT_CONFIG = {
+  min: 1,
+  max: 10,
+  default: 3,
+} as const;
+
+const DURATION_CONFIG = {
+  min: 1,
+  max: 180,
+  default: 30,
+} as const;
+
 export default function HomePage() {
   const [urls, setUrls] = useState("");
   const [email, setEmail] = useState("");
+  const [targetClipCount, setTargetClipCount] = useState<number>(CLIP_COUNT_CONFIG.default);
+  const [minimumDuration, setMinimumDuration] = useState<number>(DURATION_CONFIG.default);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
   const processVideoMutation = useMutation({
-    mutationFn: async ({ videoUrl, email }: { videoUrl: string; email: string }) => {
-      const response = await apiRequest("POST", "/api/process-video", {
+    mutationFn: async ({ 
+      videoUrl, 
+      email,
+      targetClipCount,
+      minimumDuration
+    }: { 
+      videoUrl: string; 
+      email: string;
+      targetClipCount: number;
+      minimumDuration: number;
+    }) => {
+      const response = await apiRequest("POST", "/api/process-video-advanced", {
         url: videoUrl,
         email: email || undefined,
+        targetClipCount,
+        minimumDuration,
       });
       return await response.json();
     },
@@ -77,7 +105,12 @@ export default function HomePage() {
       return;
     }
 
-    processVideoMutation.mutate({ videoUrl: url, email: email.trim() });
+    processVideoMutation.mutate({ 
+      videoUrl: url, 
+      email: email.trim(),
+      targetClipCount,
+      minimumDuration
+    });
   };
 
   return (
@@ -137,6 +170,48 @@ export default function HomePage() {
                 />
                 <p className="text-xs text-muted-foreground">
                   We'll notify you when your video is ready
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="clip-count">Target Clip Count</Label>
+                  <span className="text-sm font-medium text-foreground" data-testid="text-clip-count">
+                    {targetClipCount}
+                  </span>
+                </div>
+                <Slider
+                  id="clip-count"
+                  min={CLIP_COUNT_CONFIG.min}
+                  max={CLIP_COUNT_CONFIG.max}
+                  step={1}
+                  value={[targetClipCount]}
+                  onValueChange={(values) => setTargetClipCount(values[0])}
+                  data-testid="slider-clip-count"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Number of short clips to generate ({CLIP_COUNT_CONFIG.min}-{CLIP_COUNT_CONFIG.max})
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="min-duration">Minimum Duration</Label>
+                  <span className="text-sm font-medium text-foreground" data-testid="text-min-duration">
+                    {minimumDuration}s
+                  </span>
+                </div>
+                <Slider
+                  id="min-duration"
+                  min={DURATION_CONFIG.min}
+                  max={DURATION_CONFIG.max}
+                  step={1}
+                  value={[minimumDuration]}
+                  onValueChange={(values) => setMinimumDuration(values[0])}
+                  data-testid="slider-min-duration"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Minimum clip length in seconds ({DURATION_CONFIG.min}-{DURATION_CONFIG.max}s)
                 </p>
               </div>
 

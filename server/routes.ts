@@ -21,6 +21,13 @@ const exportVideoSchema = z.object({
   projectId: z.string(),
 });
 
+const processVideoAdvancedSchema = z.object({
+  url: z.string().url(),
+  email: z.string().email().optional(),
+  targetClipCount: z.number().int().min(1).max(10),
+  minimumDuration: z.number().int().min(1).max(180),
+});
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Ensure default admin user exists
   app.use(async (req, res, next) => {
@@ -139,6 +146,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res
         .status(400)
         .json({ error: error.message || "Failed to create bulk video tasks" });
+    }
+  });
+
+  // POST /api/process-video-advanced - Process video with custom parameters
+  // NOTE: This is a stub endpoint - implementation pending
+  app.post("/api/process-video-advanced", async (req, res) => {
+    try {
+      const { url, email, targetClipCount, minimumDuration } = processVideoAdvancedSchema.parse(req.body);
+
+      // TODO: Implement custom clip generation logic with these parameters:
+      // - targetClipCount: Number of clips to generate (1-10)
+      // - minimumDuration: Minimum clip length in seconds (1-180)
+      // - email: Optional email for notifications
+      
+      // For now, return a stub response
+      // User will implement the actual Klap API integration with these parameters
+      
+      console.log('Process video advanced called with:', {
+        url,
+        email,
+        targetClipCount,
+        minimumDuration
+      });
+
+      // Stub response - replace with actual implementation
+      res.status(501).json({ 
+        error: "Advanced processing not yet implemented",
+        message: "This endpoint will be implemented to support custom clip parameters",
+        parameters: {
+          url,
+          email,
+          targetClipCount,
+          minimumDuration
+        }
+      });
+    } catch (error: any) {
+      console.error("Error in process-video-advanced:", error);
+      res
+        .status(400)
+        .json({ error: error.message || "Failed to process video with advanced parameters" });
     }
   });
 
