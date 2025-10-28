@@ -45,6 +45,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+          // Skip email confirmation for MVP
+          // Note: This only works if auto-confirm is enabled in Supabase Dashboard
+          emailRedirectTo: `${window.location.origin}/`,
+        },
       });
 
       if (error) {
@@ -56,10 +61,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { user: null, error };
       }
 
-      toast({
-        title: "Account created",
-        description: "You have successfully signed up and are now logged in.",
-      });
+      // Check if email confirmation is required
+      if (data.user && !data.session) {
+        toast({
+          title: "Check your email",
+          description: "Please check your email to confirm your account before logging in.",
+        });
+      } else {
+        toast({
+          title: "Account created",
+          description: "You have successfully signed up and are now logged in.",
+        });
+      }
 
       return { user: data.user, error: null };
     } catch (error) {
@@ -81,11 +94,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (error) {
-        toast({
-          variant: "destructive",
-          title: "Login failed",
-          description: error.message,
-        });
+        // Special handling for email not confirmed error
+        if (error.message.toLowerCase().includes('email not confirmed')) {
+          toast({
+            variant: "destructive",
+            title: "Email not confirmed",
+            description: "Please check your email and click the confirmation link. If auto-confirm is enabled, contact support.",
+          });
+        } else {
+          toast({
+            variant: "destructive",
+            title: "Login failed",
+            description: error.message,
+          });
+        }
         return { user: null, error };
       }
 

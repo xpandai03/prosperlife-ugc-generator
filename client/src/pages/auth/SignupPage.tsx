@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'wouter';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -9,12 +9,19 @@ import { Loader2 } from 'lucide-react';
 
 export default function SignupPage() {
   const [, setLocation] = useLocation();
-  const { signUp } = useAuth();
+  const { user, signUp, loading } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [passwordError, setPasswordError] = useState('');
+
+  // Redirect if already logged in or after successful signup
+  useEffect(() => {
+    if (user && !loading) {
+      setLocation('/');
+    }
+  }, [user, loading, setLocation]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,11 +41,8 @@ export default function SignupPage() {
 
     setIsLoading(true);
 
-    const { user, error } = await signUp(email, password);
-
-    if (user && !error) {
-      setLocation('/');
-    }
+    await signUp(email, password);
+    // Redirect will happen via useEffect when user state updates
 
     setIsLoading(false);
   };
