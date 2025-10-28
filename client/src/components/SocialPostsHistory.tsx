@@ -10,12 +10,7 @@ interface SocialPostsHistoryProps {
 
 export function SocialPostsHistory({ projectId }: SocialPostsHistoryProps) {
   const { data, isLoading } = useQuery({
-    queryKey: ['social-posts', projectId],
-    queryFn: async () => {
-      const response = await fetch(`/api/social/posts/${projectId}`);
-      if (!response.ok) throw new Error('Failed to fetch posts');
-      return await response.json();
-    },
+    queryKey: [`/api/social/posts/${projectId}`],
   });
 
   if (isLoading) {

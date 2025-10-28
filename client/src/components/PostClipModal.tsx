@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiRequest } from '@/lib/queryClient';
 import {
   Dialog,
   DialogContent,
@@ -31,20 +32,11 @@ export function PostClipModal({
 
   const postMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch('/api/social/post', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId,
-          platform: 'instagram',
-          caption,
-        }),
+      const response = await apiRequest('POST', '/api/social/post', {
+        projectId,
+        platform: 'instagram',
+        caption,
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to post');
-      }
 
       return await response.json();
     },

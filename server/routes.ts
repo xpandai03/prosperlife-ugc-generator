@@ -5,9 +5,8 @@ import { klapService } from "./services/klap";
 import { lateService } from "./services/late";
 import { postToSocialSchema } from "./validators/social";
 import { supabaseAdmin } from "./services/supabaseAuth";
+import { requireAuth } from "./middleware/auth";
 import { z } from "zod";
-
-const DEFAULT_USER_ID = 1; // Admin user
 
 // Validation schemas
 const createVideoSchema = z.object({
@@ -32,23 +31,7 @@ const processVideoAdvancedSchema = z.object({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Ensure default admin user exists
-  app.use(async (req, res, next) => {
-    try {
-      const user = await storage.getUser(DEFAULT_USER_ID);
-      if (!user) {
-        await storage.createUser({
-          id: DEFAULT_USER_ID,
-          username: "admin",
-        });
-      }
-      next();
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  // GET /api/auth/health - Health check for Supabase authentication configuration
+  // GET /api/auth/health - Health check for Supabase authentication configuration (public endpoint)
   app.get("/api/auth/health", async (req, res) => {
     try {
       // Check server-side Supabase configuration
@@ -95,6 +78,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Apply authentication middleware to all /api/* routes (except /api/auth/health above)
+  app.use("/api/*", requireAuth);
+
   // POST /api/videos - Create video processing task and start processing
   app.post("/api/videos", async (req, res) => {
     try {
@@ -106,7 +92,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const task = await storage.createTask({
         id: klapResponse.id,
-        userId: DEFAULT_USER_ID,
+        userId: req.userId!,
         sourceVideoUrl,
         status: klapResponse.status,
         outputId: klapResponse.output_id || null,
@@ -140,7 +126,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
             const task = await storage.createTask({
               id: klapResponse.id,
-              userId: DEFAULT_USER_ID,
+              userId: req.userId!,
               sourceVideoUrl: url,
               status: klapResponse.status,
               outputId: klapResponse.output_id || null,
@@ -220,7 +206,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Step 2: Save task in database
       const task = await storage.createTask({
         id: klapTask.id,
-        userId: DEFAULT_USER_ID,
+        userId: req.userId!,
         sourceVideoUrl: url,
         email: email || null,
         status: klapTask.status,
@@ -246,7 +232,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET /api/videos - Get all video tasks for the user
   app.get("/api/videos", async (req, res) => {
     try {
-      const tasks = await storage.getAllTasks(DEFAULT_USER_ID);
+      const tasks = await storage.getAllTasks(req.userId!);
       res.json(tasks);
     } catch (error: any) {
       console.error("Error fetching videos:", error);
@@ -263,6 +249,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const task = await storage.getTask(taskId);
       if (!task) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+
+      // Verify ownership - ensure the task belongs to the authenticated user
+      if (task.userId !== req.userId) {
         return res.status(404).json({ error: "Task not found" });
       }
 
@@ -347,6 +338,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Task not found" });
       }
 
+      // Verify ownership - ensure the task belongs to the authenticated user
+      if (task.userId !== req.userId) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+
       const project = await storage.getProject(projectId);
       if (!project || project.taskId !== taskId) {
         return res.status(404).json({ error: "Project not found" });
@@ -402,7 +398,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Step 2: Save task in database
       const task = await storage.createTask({
         id: klapTask.id,
-        userId: DEFAULT_USER_ID,
+        userId: req.userId!,
         sourceVideoUrl: url,
         email: email || null,
         status: klapTask.status,
@@ -449,6 +445,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const project = await storage.getProject(projectId);
       if (!project) {
         console.log(`[Social Post] Project not found: ${projectId}`);
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      // Verify ownership - ensure the project belongs to the authenticated user
+      const task = await storage.getTask(project.taskId);
+      if (!task || task.userId !== req.userId) {
+        console.log(`[Social Post] Unauthorized access to project ${projectId}`);
         return res.status(404).json({ error: "Project not found" });
       }
 
@@ -548,6 +551,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { projectId } = req.params;
       console.log(`[Social Post] Fetching posts for project ${projectId}`);
 
+      // Verify ownership - ensure the project belongs to the authenticated user
+      const project = await storage.getProject(projectId);
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      const task = await storage.getTask(project.taskId);
+      if (!task || task.userId !== req.userId) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
       const posts = await storage.getSocialPostsByProject(projectId);
 
       res.json({
@@ -568,6 +582,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { taskId } = req.params;
       console.log(`[Social Post] Fetching posts for task ${taskId}`);
+
+      // Verify ownership - ensure the task belongs to the authenticated user
+      const task = await storage.getTask(taskId);
+      if (!task) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+
+      if (task.userId !== req.userId) {
+        return res.status(404).json({ error: "Task not found" });
+      }
 
       const posts = await storage.getSocialPostsByTask(taskId);
 
