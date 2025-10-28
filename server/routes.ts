@@ -2,6 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { klapService } from "./services/klap";
+import { lateService } from "./services/late";
+import { postToSocialSchema } from "./validators/social";
 import { z } from "zod";
 
 const DEFAULT_USER_ID = 1; // Admin user
@@ -372,6 +374,165 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res
         .status(400)
         .json({ error: error.message || "Failed to start processing" });
+    }
+  });
+
+  // ========================================
+  // SOCIAL POSTING ROUTES (Late.dev API)
+  // ========================================
+
+  // POST /api/social/post - Post a clip to social media
+  app.post("/api/social/post", async (req, res) => {
+    try {
+      // Validate input
+      const validation = postToSocialSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          error: "Invalid input",
+          details: validation.error.errors,
+        });
+      }
+
+      const { projectId, platform, caption } = validation.data;
+
+      console.log(`[Social Post] Request to post project ${projectId} to ${platform}`);
+
+      // Get project to verify it exists and get associated task
+      const project = await storage.getProject(projectId);
+      if (!project) {
+        console.log(`[Social Post] Project not found: ${projectId}`);
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      // Get the latest successful export for this project
+      const exports = await storage.getExportsByTask(project.taskId);
+      const projectExport = exports.find(
+        (exp) => exp.projectId === projectId && exp.status === "ready"
+      );
+
+      if (!projectExport || !projectExport.srcUrl) {
+        console.log(`[Social Post] No ready export found for project ${projectId}`);
+        return res.status(400).json({
+          error: "No ready export found for this project",
+          details: "Please export the clip before posting to social media",
+        });
+      }
+
+      console.log(`[Social Post] Using export URL: ${projectExport.srcUrl.substring(0, 50)}...`);
+
+      // Create initial social post record
+      const socialPost = await storage.createSocialPost({
+        projectId,
+        taskId: project.taskId,
+        platform,
+        caption: caption || '',
+        status: 'posting',
+        latePostId: null,
+        platformPostUrl: null,
+        errorMessage: null,
+        lateResponse: null,
+        publishedAt: null,
+      });
+
+      console.log(`[Social Post] Created social post record: ${socialPost.id}`);
+
+      // Post to Instagram via Late API
+      try {
+        const lateResponse = await lateService.postToInstagram({
+          videoUrl: projectExport.srcUrl,
+          caption: caption || '',
+          contentType: 'reel',
+        });
+
+        // Extract platform-specific data
+        const instagramPost = lateResponse.post.platforms.find(
+          (p) => p.platform === 'instagram'
+        );
+
+        const finalStatus = instagramPost?.status === 'published' ? 'published' :
+                           instagramPost?.status === 'failed' ? 'failed' : 'posting';
+
+        // Update social post with success
+        const updatedPost = await storage.updateSocialPost(socialPost.id, {
+          status: finalStatus,
+          latePostId: lateResponse.post._id,
+          platformPostUrl: instagramPost?.platformPostUrl || null,
+          lateResponse: lateResponse as any,
+          publishedAt: finalStatus === 'published' ? new Date() : null,
+          errorMessage: instagramPost?.error || null,
+        });
+
+        console.log(`[Social Post] Successfully posted to Instagram: ${instagramPost?.platformPostUrl || 'pending'}`);
+
+        res.json({
+          success: true,
+          post: updatedPost,
+          platformUrl: instagramPost?.platformPostUrl,
+          message: finalStatus === 'published'
+            ? "Successfully posted to Instagram!"
+            : "Post is being processed by Instagram",
+        });
+      } catch (lateError: any) {
+        // Update social post with failure
+        await storage.updateSocialPost(socialPost.id, {
+          status: 'failed',
+          errorMessage: lateError.message,
+        });
+
+        console.error("[Social Post] Late API error:", lateError);
+        res.status(500).json({
+          error: "Failed to post to Instagram",
+          details: lateError.message,
+        });
+      }
+    } catch (error: any) {
+      console.error("[Social Post] Error posting to social:", error);
+      res.status(500).json({
+        error: "Failed to create social post",
+        details: error.message,
+      });
+    }
+  });
+
+  // GET /api/social/posts/:projectId - Get social posts for a project
+  app.get("/api/social/posts/:projectId", async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      console.log(`[Social Post] Fetching posts for project ${projectId}`);
+
+      const posts = await storage.getSocialPostsByProject(projectId);
+
+      res.json({
+        posts,
+        count: posts.length
+      });
+    } catch (error: any) {
+      console.error("[Social Post] Error fetching social posts:", error);
+      res.status(500).json({
+        error: "Failed to fetch social posts",
+        details: error.message,
+      });
+    }
+  });
+
+  // GET /api/social/posts/task/:taskId - Get all social posts for a task
+  app.get("/api/social/posts/task/:taskId", async (req, res) => {
+    try {
+      const { taskId } = req.params;
+      console.log(`[Social Post] Fetching posts for task ${taskId}`);
+
+      const posts = await storage.getSocialPostsByTask(taskId);
+
+      res.json({
+        posts,
+        count: posts.length
+      });
+    } catch (error: any) {
+      console.error("[Social Post] Error fetching social posts:", error);
+      res.status(500).json({
+        error: "Failed to fetch social posts",
+        details: error.message,
+      });
     }
   });
 

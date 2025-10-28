@@ -75,6 +75,22 @@ export const apiLogs = pgTable("api_logs", {
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
 });
 
+// Social Posts table - tracks all social media posts via Late.dev API
+export const socialPosts = pgTable("social_posts", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  projectId: text("project_id").notNull().references(() => projects.id),
+  taskId: text("task_id").notNull().references(() => tasks.id),
+  platform: text("platform").notNull(), // instagram, tiktok, youtube, etc.
+  latePostId: text("late_post_id"), // Late.dev post ID
+  platformPostUrl: text("platform_post_url"), // Public URL on social platform
+  caption: text("caption"),
+  status: text("status").notNull(), // posting, published, failed
+  errorMessage: text("error_message"),
+  lateResponse: jsonb("late_response"), // Full Late API response
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  publishedAt: timestamp("published_at"),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   tasks: many(tasks),
@@ -110,12 +126,24 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
     references: [tasks.id],
   }),
   exports: many(exports),
+  socialPosts: many(socialPosts),
 }));
 
 export const exportsRelations = relations(exports, ({ one }) => ({
   project: one(projects, {
     fields: [exports.projectId],
     references: [projects.id],
+  }),
+}));
+
+export const socialPostsRelations = relations(socialPosts, ({ one }) => ({
+  project: one(projects, {
+    fields: [socialPosts.projectId],
+    references: [projects.id],
+  }),
+  task: one(tasks, {
+    fields: [socialPosts.taskId],
+    references: [tasks.id],
   }),
 }));
 
@@ -146,6 +174,14 @@ export const insertApiLogSchema = createInsertSchema(apiLogs).omit({
   createdAt: true,
 });
 
+export const insertSocialPostSchema = createInsertSchema(socialPosts, {
+  createdAt: () => z.date().optional(),
+  publishedAt: () => z.date().optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -164,3 +200,6 @@ export type InsertExport = z.infer<typeof insertExportSchema>;
 
 export type ApiLog = typeof apiLogs.$inferSelect;
 export type InsertApiLog = z.infer<typeof insertApiLogSchema>;
+
+export type SocialPost = typeof socialPosts.$inferSelect;
+export type InsertSocialPost = z.infer<typeof insertSocialPostSchema>;

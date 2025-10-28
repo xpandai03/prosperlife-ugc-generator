@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Download, Play, Sparkles } from "lucide-react";
 import { VideoPreview } from "./VideoPreview";
+import { PostToSocialButton } from "./PostToSocialButton";
 import type { Project, Export } from "@shared/schema";
 
 interface ShortCardProps {
@@ -70,17 +71,24 @@ export function ShortCard({ project, exportData, onExport, isExporting }: ShortC
       
       <CardFooter className="p-4 pt-0 flex gap-2">
         {canDownload ? (
-          <Button 
-            asChild 
-            className="flex-1" 
-            size="sm"
-            data-testid={`button-download-${project.id}`}
-          >
-            <a href={exportData.srcUrl!} target="_blank" rel="noopener noreferrer" download>
-              <Download className="h-4 w-4 mr-2" />
-              Download
-            </a>
-          </Button>
+          <>
+            <Button
+              asChild
+              className="flex-1"
+              size="sm"
+              data-testid={`button-download-${project.id}`}
+            >
+              <a href={exportData.srcUrl!} target="_blank" rel="noopener noreferrer" download>
+                <Download className="h-4 w-4 mr-2" />
+                Download
+              </a>
+            </Button>
+            <PostToSocialButton
+              projectId={project.id}
+              exportUrl={exportData?.srcUrl || null}
+              disabled={exportData?.status !== 'ready'}
+            />
+          </>
         ) : onExport ? (
           <Button
             onClick={() => onExport(project.id)}

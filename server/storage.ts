@@ -5,6 +5,7 @@ import {
   folders,
   projects,
   exports,
+  socialPosts,
   type User,
   type InsertUser,
   type Task,
@@ -15,6 +16,8 @@ import {
   type InsertProject,
   type Export,
   type InsertExport,
+  type SocialPost,
+  type InsertSocialPost,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
@@ -44,6 +47,13 @@ export interface IStorage {
   updateExport(id: string, updates: Partial<InsertExport>): Promise<Export | undefined>;
   getExport(id: string): Promise<Export | undefined>;
   getExportsByTask(taskId: string): Promise<Export[]>;
+
+  // Social Posts
+  createSocialPost(post: InsertSocialPost): Promise<SocialPost>;
+  updateSocialPost(id: number, updates: Partial<Omit<SocialPost, 'id' | 'createdAt'>>): Promise<SocialPost | undefined>;
+  getSocialPost(id: number): Promise<SocialPost | undefined>;
+  getSocialPostsByProject(projectId: string): Promise<SocialPost[]>;
+  getSocialPostsByTask(taskId: string): Promise<SocialPost[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -139,6 +149,51 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(projects, eq(exports.projectId, projects.id))
       .where(eq(projects.taskId, taskId))
       .then(results => results.map(r => r.exports));
+  }
+
+  // Social Posts
+  async createSocialPost(insertSocialPost: InsertSocialPost): Promise<SocialPost> {
+    const [socialPost] = await db
+      .insert(socialPosts)
+      .values(insertSocialPost)
+      .returning();
+    return socialPost;
+  }
+
+  async updateSocialPost(
+    id: number,
+    updates: Partial<Omit<SocialPost, 'id' | 'createdAt'>>
+  ): Promise<SocialPost | undefined> {
+    const [socialPost] = await db
+      .update(socialPosts)
+      .set(updates)
+      .where(eq(socialPosts.id, id))
+      .returning();
+    return socialPost || undefined;
+  }
+
+  async getSocialPost(id: number): Promise<SocialPost | undefined> {
+    const [socialPost] = await db
+      .select()
+      .from(socialPosts)
+      .where(eq(socialPosts.id, id));
+    return socialPost || undefined;
+  }
+
+  async getSocialPostsByProject(projectId: string): Promise<SocialPost[]> {
+    return db
+      .select()
+      .from(socialPosts)
+      .where(eq(socialPosts.projectId, projectId))
+      .orderBy(desc(socialPosts.createdAt));
+  }
+
+  async getSocialPostsByTask(taskId: string): Promise<SocialPost[]> {
+    return db
+      .select()
+      .from(socialPosts)
+      .where(eq(socialPosts.taskId, taskId))
+      .orderBy(desc(socialPosts.createdAt));
   }
 }
 
