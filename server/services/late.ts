@@ -52,36 +52,112 @@ export interface LateErrorResponse {
 }
 
 /**
+ * Response from creating a Late.dev profile
+ */
+export interface CreateProfileResponse {
+  profileId: string;
+  email: string;
+  createdAt: string;
+}
+
+/**
  * Late.dev Service
  *
  * Handles all interactions with the Late.dev API
  */
 export const lateService = {
   /**
-   * Post a video to Instagram as a Reel
+   * Create a new Late.dev profile for a user
    *
-   * @param params - Video URL and caption
-   * @returns Late API response with post details and Instagram URL
-   * @throws Error if API call fails
+   * @param email - User's email address
+   * @returns Profile ID and creation details
+   * @throws Error if profile creation fails
    */
-  async postToInstagram(params: PostToInstagramParams): Promise<LatePostResponse> {
+  async createProfile(email: string): Promise<CreateProfileResponse> {
     if (!LATE_API_KEY) {
       throw new Error('LATE_API_KEY is not configured. Please add it to your .env file.');
     }
 
+    console.log('[Late Service] Creating profile for:', email);
+
+    try {
+      const response = await fetch(`${LATE_BASE_URL}/profiles`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${LATE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error('[Late Service] Profile creation error:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: data,
+        });
+
+        const errorMessage = data.error || data.message || 'Unknown error from Late API';
+        throw new Error(`Late API Error (${response.status}): ${errorMessage}`);
+      }
+
+      console.log('[Late Service] Profile created successfully:', {
+        profileId: data.id || data._id,
+        email: data.email,
+      });
+
+      return {
+        profileId: data.id || data._id,
+        email: data.email,
+        createdAt: data.createdAt || new Date().toISOString(),
+      };
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new Error('Network error: Unable to reach Late.dev API. Please check your internet connection.');
+      }
+      throw error;
+    }
+  },
+
+  /**
+   * Post a video to Instagram as a Reel (with support for per-user profiles)
+   *
+   * @param params - Video URL and caption
+   * @param profileId - Optional Late.dev profile ID (uses default if not provided)
+   * @param accountId - Optional account ID (uses default if not provided)
+   * @returns Late API response with post details and Instagram URL
+   * @throws Error if API call fails
+   */
+  async postToInstagram(
+    params: PostToInstagramParams,
+    profileId?: string,
+    accountId?: string
+  ): Promise<LatePostResponse> {
+    if (!LATE_API_KEY) {
+      throw new Error('LATE_API_KEY is not configured. Please add it to your .env file.');
+    }
+
+    // Use provided accountId or fall back to hardcoded default
+    const instagramAccountId = accountId || INSTAGRAM_ACCOUNT_ID;
+
     console.log('[Late Service] Posting to Instagram:', {
       videoUrl: params.videoUrl.substring(0, 50) + '...',
-      caption: params.caption, // Log full caption
+      caption: params.caption,
       captionLength: params.caption.length,
       contentType: params.contentType || 'reel',
+      profileId: profileId || 'default',
+      accountId: instagramAccountId,
     });
 
     const requestBody = {
       content: params.caption,
+      ...(profileId && { profileId }), // Include profileId if provided
       platforms: [
         {
           platform: 'instagram',
-          accountId: INSTAGRAM_ACCOUNT_ID,
+          accountId: instagramAccountId,
           platformSpecificData: {
             contentType: params.contentType || 'reel',
           },

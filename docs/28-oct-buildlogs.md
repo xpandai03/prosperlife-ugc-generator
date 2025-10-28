@@ -45,6 +45,39 @@ Implement Late.dev API integration for posting generated video clips to Instagra
 
 ---
 
+## 3:40 PM PST - October 28, 2025
+
+### Phase 4 Complete: Backend API Protection & User Scoping ✅
+- UUID migration applied to production database
+- Auth middleware protecting all /api/* routes
+- User auto-creation on first login
+- All queries scoped to authenticated user
+- Deployment successful on Render
+
+### Phase 5 Complete: Late.dev Per-User Profiles ✅
+**Implementation Summary:**
+- ✅ Added `createProfile()` method to Late.dev service (server/services/late.ts)
+- ✅ Implemented webhook handler at `/api/auth/webhook` for user.created events
+- ✅ Webhook automatically creates Late.dev profile on user signup
+- ✅ Updates user record with `late_profile_id` after profile creation
+- ✅ Updated social posting to use user's `late_profile_id`
+- ✅ Added validation to ensure user has Late profile before posting
+- ✅ Maintains backward compatibility with optional profileId/accountId parameters
+- ✅ Comprehensive documentation created (docs/phase5-webhook-setup.md)
+
+**Files Modified:**
+1. `server/services/late.ts` - Added createProfile method + per-user posting support
+2. `server/routes.ts` - Added webhook handler + updated social posting logic
+3. `docs/phase5-webhook-setup.md` - Complete setup guide and troubleshooting
+
+**Next Manual Step:**
+Configure Supabase Database Webhook (see docs/phase5-webhook-setup.md):
+- Navigate to Database → Webhooks in Supabase Dashboard
+- Create webhook for INSERT on public.users table
+- Point to: https://streamline-mvp.onrender.com/api/auth/webhook
+
+---
+
 ## Environment Setup
 
 ### Prerequisites Verified
