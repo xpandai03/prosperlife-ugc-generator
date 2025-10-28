@@ -104,6 +104,9 @@ export const lateService = {
         throw new Error(`Late API Error (${response.status}): ${errorMessage}`);
       }
 
+      // Debug: Log the full raw response to understand the structure
+      console.log('[Late Service] Raw API response:', JSON.stringify(data, null, 2));
+
       console.log('[Late Service] Profile created successfully:', {
         profileId: data.id || data._id,
         email: data.email,
