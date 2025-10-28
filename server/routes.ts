@@ -78,7 +78,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Apply authentication middleware to all /api/* routes (except /api/auth/health above)
+  // POST /api/auth/webhook - Handle Supabase auth webhooks (public endpoint)
+  app.post("/api/auth/webhook", async (req, res) => {
+    try {
+      const event = req.body;
+
+      console.log('[Auth Webhook] Received event:', event.type);
+
+      // Handle user.created event
+      if (event.type === 'INSERT' && event.table === 'users') {
+        const { id: userId, email } = event.record;
+
+        console.log('[Auth Webhook] New user created:', { userId, email });
+
+        // Create Late.dev profile for the new user
+        try {
+          const { profileId } = await lateService.createProfile(email);
+
+          console.log('[Auth Webhook] Late.dev profile created:', profileId);
+
+          // Update user record with Late profile ID
+          const { error: updateError } = await supabaseAdmin
+            .from('users')
+            .update({ late_profile_id: profileId })
+            .eq('id', userId);
+
+          if (updateError) {
+            console.error('[Auth Webhook] Failed to update user with profile ID:', updateError);
+          } else {
+            console.log('[Auth Webhook] User updated with Late profile ID');
+          }
+        } catch (profileError: any) {
+          console.error('[Auth Webhook] Failed to create Late profile:', profileError);
+          // Don't fail the webhook - profile can be created later
+        }
+      }
+
+      res.json({ received: true });
+    } catch (error: any) {
+      console.error('[Auth Webhook] Error processing webhook:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Apply authentication middleware to all /api/* routes (except /api/auth/* above)
   app.use("/api/*", requireAuth);
 
   // POST /api/videos - Create video processing task and start processing
@@ -274,7 +317,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // If ready, fetch and store projects
           if (klapStatus.status === "ready" && klapStatus.output_id) {
-            await fetchAndStoreProjects(taskId, klapStatus.output_id);
+            await fetchAndStoreProjects(taskId, klapStatus.output_id, task.userId);
           }
         } catch (error) {
           console.error("Error updating task status:", error);
@@ -360,6 +403,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         projectId,
         folderId: project.folderId,
         taskId,
+        userId: req.userId!,
         status: exportResponse.status,
         srcUrl: exportResponse.src_url || null,
         errorMessage: exportResponse.error || null,
@@ -471,6 +515,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`[Social Post] Using export URL: ${projectExport.srcUrl.substring(0, 50)}...`);
 
+      // Get user's Late.dev profile information
+      const user = await storage.getUser(req.userId!);
+      if (!user) {
+        console.log(`[Social Post] User not found: ${req.userId}`);
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      if (!user.lateProfileId) {
+        console.log(`[Social Post] User ${req.userId} has no Late profile`);
+        return res.status(400).json({
+          error: "No Late.dev profile configured",
+          details: "Your Late.dev profile is being created. Please try again in a moment.",
+        });
+      }
+
+      // For now, use the default Instagram account ID until users can connect their own
+      // In the future, this will come from user.lateAccountId
+      const accountId = user.lateAccountId || process.env.INSTAGRAM_ACCOUNT_ID || '6900d2cd8bbca9c10cbfff74';
+
+      console.log(`[Social Post] Using Late profile: ${user.lateProfileId}, account: ${accountId}`);
+
       // Create initial social post record
       const socialPost = await storage.createSocialPost({
         projectId,
@@ -487,13 +552,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`[Social Post] Created social post record: ${socialPost.id}`);
 
-      // Post to Instagram via Late API
+      // Post to Instagram via Late API using user's profile
       try {
-        const lateResponse = await lateService.postToInstagram({
-          videoUrl: projectExport.srcUrl,
-          caption: caption || '',
-          contentType: 'reel',
-        });
+        const lateResponse = await lateService.postToInstagram(
+          {
+            videoUrl: projectExport.srcUrl,
+            caption: caption || '',
+            contentType: 'reel',
+          },
+          user.lateProfileId,  // User's Late profile ID
+          accountId            // Instagram account ID
+        );
 
         // Extract platform-specific data
         const instagramPost = lateResponse.post.platforms.find(
@@ -632,10 +701,15 @@ async function processVideoTask(taskId: string) {
 
       if (klapStatus.status === "ready") {
         if (klapStatus.output_id) {
-          await fetchAndStoreProjects(taskId, klapStatus.output_id);
+          // Fetch task to get userId
+          const task = await storage.getTask(taskId);
+          if (!task) {
+            throw new Error(`Task ${taskId} not found`);
+          }
+
+          await fetchAndStoreProjects(taskId, klapStatus.output_id, task.userId);
 
           // Check if auto-export was requested
-          const task = await storage.getTask(taskId);
           if (task && task.autoExportRequested === "true") {
             console.log(
               `Auto-export requested for task ${taskId}, starting pipeline...`,
@@ -662,7 +736,7 @@ async function processVideoTask(taskId: string) {
   }
 }
 
-async function fetchAndStoreProjects(taskId: string, folderId: string) {
+async function fetchAndStoreProjects(taskId: string, folderId: string, userId: string) {
   try {
     // Check if folder exists, create if not
     const existingFolder = await storage.getFolder(folderId);
@@ -670,6 +744,7 @@ async function fetchAndStoreProjects(taskId: string, folderId: string) {
       await storage.createFolder({
         id: folderId,
         taskId,
+        userId,
       });
     }
 
@@ -684,6 +759,7 @@ async function fetchAndStoreProjects(taskId: string, folderId: string) {
           id: klapProject.id,
           folderId,
           taskId,
+          userId,
           name: klapProject.name,
           viralityScore: klapProject.virality_score || null,
           previewUrl: `https://klap.app/player/${klapProject.id}`,
@@ -803,6 +879,7 @@ async function runAutoExportPipeline(taskId: string, folderId: string) {
           projectId: project.id,
           folderId: project.folderId,
           taskId,
+          userId: project.userId,
           status: exportResponse.status,
           srcUrl: exportResponse.src_url || null,
           errorMessage: exportResponse.error || null,
@@ -962,9 +1039,14 @@ async function processCompleteWorkflow(taskId: string) {
         const folderId = klapStatus.output_id;
         console.log(`[Workflow] Task complete. Folder ID: ${folderId}`);
 
-        // Send email notification if email was provided
+        // Fetch task to get userId and check for email
         const task = await storage.getTask(taskId);
-        if (task && task.email) {
+        if (!task) {
+          throw new Error(`Task ${taskId} not found`);
+        }
+
+        // Send email notification if email was provided
+        if (task.email) {
           try {
             const detailsUrl = `${process.env.REPLIT_DOMAINS ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}` : 'http://localhost:5000'}/details/${taskId}`;
             await fetch(
@@ -987,7 +1069,7 @@ async function processCompleteWorkflow(taskId: string) {
         }
 
         // Step 2: Get projects (following script)
-        await fetchAndStoreProjects(taskId, folderId);
+        await fetchAndStoreProjects(taskId, folderId, task.userId);
 
         const projects = await storage.getProjectsByTask(taskId);
 
@@ -1016,6 +1098,7 @@ async function processCompleteWorkflow(taskId: string) {
           projectId: firstProject.id,
           folderId,
           taskId,
+          userId: task.userId,
           status: exportResponse.status,
           srcUrl: exportResponse.src_url || null,
           errorMessage: exportResponse.error || null,
