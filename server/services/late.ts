@@ -107,15 +107,20 @@ export const lateService = {
       // Debug: Log the full raw response to understand the structure
       console.log('[Late Service] Raw API response:', JSON.stringify(data, null, 2));
 
+      // Extract profile data from the response
+      const profileId = data.profile?._id || data.profile?.id || data._id || data.id;
+      const profileEmail = data.profile?.email || data.email || email;
+
       console.log('[Late Service] Profile created successfully:', {
-        profileId: data.id || data._id,
-        email: data.email,
+        profileId,
+        email: profileEmail,
+        message: data.message,
       });
 
       return {
-        profileId: data.id || data._id,
-        email: data.email,
-        createdAt: data.createdAt || new Date().toISOString(),
+        profileId,
+        email: profileEmail,
+        createdAt: data.profile?.createdAt || data.createdAt || new Date().toISOString(),
       };
     } catch (error) {
       if (error instanceof TypeError && error.message.includes('fetch')) {
