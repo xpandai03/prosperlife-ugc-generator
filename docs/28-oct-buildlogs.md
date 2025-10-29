@@ -88,7 +88,19 @@ Implement Late.dev API integration for posting generated video clips to Instagra
   3. Added fallback: `const name = full_name || email.split('@')[0]`
   4. Pass name to Late.dev API: `{ email, name }`
 - Committed: 8c371ea
-- Status: ✅ Deployed to production, awaiting test signup
+- Status: ✅ Fixed
+
+**Issue 3: "profileId: undefined" in logs ✅**
+- API call succeeded but logs showed: `{ profileId: undefined, email: undefined }`
+- Root Cause: Late.dev response structure is `{ profile: { _id, email } }`, not `{ _id, email }`
+- We were extracting `data._id` when it should be `data.profile._id`
+- Fix Applied:
+  1. Added raw response logging: `console.log('[Late Service] Raw API response:', ...)`
+  2. Discovered actual structure from production logs
+  3. Updated extraction: `const profileId = data.profile?._id || data.profile?.id || ...`
+  4. Updated email extraction: `const profileEmail = data.profile?.email || ...`
+- Committed: 80e601d (debug logging), a867295 (fix)
+- Status: ✅ Deployed to production
 
 **Next Manual Step:**
 Configure Supabase Database Webhook (see docs/phase5-webhook-setup.md):
