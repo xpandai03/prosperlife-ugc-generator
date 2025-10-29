@@ -205,6 +205,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const results = await Promise.allSettled(
         urls.map(async (url) => {
           try {
+            // Check usage limit for each video (Phase 6: Free tier limits)
+            const canCreateVideo = await checkVideoLimit(req.userId!);
+            if (!canCreateVideo) {
+              console.log('[Usage Limits] Video limit reached for user (bulk):', req.userId);
+              return {
+                url,
+                success: false,
+                error: 'Monthly video limit reached. Free plan allows 3 videos per month.',
+              };
+            }
+
             const klapResponse = await klapService.createVideoToShortsTask(url);
 
             const task = await storage.createTask({
@@ -218,6 +229,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
               autoExportRequested: autoExport ? "true" : "false",
               autoExportStatus: autoExport ? "pending" : null,
             });
+
+            // Increment usage counter (Phase 6: Track video creation)
+            await incrementVideoUsage(req.userId!);
+            console.log('[Usage Limits] Usage incremented for bulk video:', url);
 
             // Start background processing
             processVideoTask(task.id).catch(console.error);
@@ -280,6 +295,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         minimumDuration
       });
 
+      // Check usage limit (Phase 6: Free tier limits)
+      const canCreateVideo = await checkVideoLimit(req.userId!);
+      if (!canCreateVideo) {
+        console.log('[Usage Limits] Video limit reached for user:', req.userId);
+        return res.status(403).json({
+          error: 'Monthly video limit reached',
+          message: 'Free plan allows 3 videos per month. Upgrade to Pro for unlimited videos.',
+          limit: FREE_VIDEO_LIMIT,
+        });
+      }
+
       // Step 1: Create task via Klap API with custom parameters
       const klapTask = await klapService.createVideoToShortsTask(url, {
         targetClipCount,
@@ -299,6 +325,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         autoExportRequested: "true",
         autoExportStatus: "pending",
       });
+
+      // Increment usage counter (Phase 6: Track video creation)
+      await incrementVideoUsage(req.userId!);
+      console.log('[Usage Limits] Usage incremented for process-video-advanced');
 
       // Step 3: Start background workflow (follows exact script)
       processCompleteWorkflow(task.id).catch(console.error);
@@ -485,10 +515,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // POST /api/process-video - Simple one-click workflow following exact script pattern
   app.post("/api/process-video", async (req, res) => {
     try {
-      const { url, email } = z.object({ 
+      const { url, email } = z.object({
         url: z.string().url(),
         email: z.string().email().optional()
       }).parse(req.body);
+
+      // Check usage limit (Phase 6: Free tier limits)
+      const canCreateVideo = await checkVideoLimit(req.userId!);
+      if (!canCreateVideo) {
+        console.log('[Usage Limits] Video limit reached for user:', req.userId);
+        return res.status(403).json({
+          error: 'Monthly video limit reached',
+          message: 'Free plan allows 3 videos per month. Upgrade to Pro for unlimited videos.',
+          limit: FREE_VIDEO_LIMIT,
+        });
+      }
 
       // Step 1: Create task via Klap API
       const klapTask = await klapService.createVideoToShortsTask(url);
@@ -506,6 +547,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         autoExportRequested: "true",
         autoExportStatus: "pending",
       });
+
+      // Increment usage counter (Phase 6: Track video creation)
+      await incrementVideoUsage(req.userId!);
+      console.log('[Usage Limits] Usage incremented for process-video');
 
       // Step 3: Start background workflow (follows exact script)
       processCompleteWorkflow(task.id).catch(console.error);
