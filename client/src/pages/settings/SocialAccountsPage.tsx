@@ -101,18 +101,30 @@ export default function SocialAccountsPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch accounts');
+        const errorData = await response.json();
+        console.error('Error fetching accounts:', errorData);
+        // Don't show toast for profile not configured - this is expected for new users
+        if (!errorData.message?.includes('profile')) {
+          toast({
+            title: 'Error',
+            description: errorData.message || 'Failed to load connected accounts',
+            variant: 'destructive',
+          });
+        }
+      } else {
+        const data = await response.json();
+        setAccounts(data.accounts || []);
       }
-
-      const data = await response.json();
-      setAccounts(data.accounts || []);
     } catch (error: any) {
       console.error('Error fetching accounts:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load connected accounts',
-        variant: 'destructive',
-      });
+      // Only show error toast for unexpected errors
+      if (error.message && !error.message.includes('profile')) {
+        toast({
+          title: 'Error',
+          description: 'Failed to load connected accounts',
+          variant: 'destructive',
+        });
+      }
     } finally {
       setLoading(false);
     }
@@ -129,7 +141,8 @@ export default function SocialAccountsPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to generate connect URL');
+        const errorData = await response.json();
+        throw new Error(errorData.message || errorData.error || 'Failed to generate connect URL');
       }
 
       const data = await response.json();

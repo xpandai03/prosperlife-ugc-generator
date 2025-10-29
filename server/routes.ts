@@ -392,12 +392,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Get user's Late.dev profile ID
-      const user = await storage.getUser(userId);
+      let user = await storage.getUser(userId);
+
+      // Create Late.dev profile if user doesn't have one
       if (!user?.lateProfileId) {
-        console.error('[OAuth] User has no Late profile:', userId);
-        return res.status(400).json({
-          error: 'No Late.dev profile',
-          message: 'Please create a Late.dev profile first',
+        console.log('[OAuth] User has no Late profile, creating one:', userId);
+
+        try {
+          // Create Late.dev profile
+          const { profileId } = await lateService.createProfile(
+            user!.email,
+            user!.fullName || user!.email.split('@')[0]
+          );
+
+          // Update user with profile ID
+          await storage.updateUser(userId, { lateProfileId: profileId });
+
+          // Reload user
+          user = await storage.getUser(userId);
+
+          console.log('[OAuth] Late profile created:', { userId, profileId });
+        } catch (profileError: any) {
+          console.error('[OAuth] Failed to create Late profile:', profileError);
+          return res.status(500).json({
+            error: 'Failed to create profile',
+            message: 'Unable to create your social media profile. Please try again.',
+            details: profileError.message,
+          });
+        }
+      }
+
+      if (!user?.lateProfileId) {
+        console.error('[OAuth] Still no Late profile after creation attempt:', userId);
+        return res.status(500).json({
+          error: 'Profile creation failed',
+          message: 'Unable to set up your social media profile. Please contact support.',
         });
       }
 
