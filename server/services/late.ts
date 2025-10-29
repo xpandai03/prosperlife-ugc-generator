@@ -266,14 +266,21 @@ export const lateService = {
    *
    * Useful for debugging and verifying account connections
    *
+   * @param profileId - Optional profile ID to filter accounts
    * @returns List of connected social media accounts
    */
-  async getAccounts(): Promise<any> {
+  async getAccounts(profileId?: string): Promise<any> {
     if (!LATE_API_KEY) {
       throw new Error('LATE_API_KEY is not configured');
     }
 
-    const response = await fetch(`${LATE_BASE_URL}/accounts`, {
+    const url = profileId
+      ? `${LATE_BASE_URL}/accounts?profileId=${profileId}`
+      : `${LATE_BASE_URL}/accounts`;
+
+    console.log('[Late Service] Fetching accounts:', { profileId, url });
+
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${LATE_API_KEY}`,
@@ -281,9 +288,83 @@ export const lateService = {
     });
 
     if (!response.ok) {
+      const error = await response.json();
+      console.error('[Late Service] Failed to fetch accounts:', error);
       throw new Error(`Failed to fetch accounts: ${response.status}`);
     }
 
-    return await response.json();
+    const data = await response.json();
+    console.log('[Late Service] Accounts fetched:', {
+      count: data.accounts?.length || 0,
+      accounts: data.accounts?.map((a: any) => ({ platform: a.platform, username: a.username })),
+    });
+
+    return data;
+  },
+
+  /**
+   * Generate OAuth connect URL for a platform
+   *
+   * @param profileId - Late.dev profile ID to connect the account to
+   * @param platform - Platform to connect (instagram, tiktok, youtube, etc.)
+   * @param redirectUrl - Custom redirect URL after OAuth completion
+   * @returns OAuth URL that the user should visit
+   */
+  generateConnectUrl(profileId: string, platform: string, redirectUrl: string): string {
+    if (!LATE_API_KEY) {
+      throw new Error('LATE_API_KEY is not configured');
+    }
+
+    // Construct the Late.dev OAuth URL
+    const connectUrl = `${LATE_BASE_URL}/connect/${platform}?profileId=${profileId}&redirect_url=${encodeURIComponent(redirectUrl)}`;
+
+    console.log('[Late Service] Generated connect URL:', {
+      profileId,
+      platform,
+      redirectUrl,
+      connectUrl: connectUrl.substring(0, 100) + '...',
+    });
+
+    return connectUrl;
+  },
+
+  /**
+   * Handle OAuth callback and fetch account details
+   *
+   * After Late.dev redirects back to our app with success parameters,
+   * this method fetches the full account details from Late.dev API.
+   *
+   * @param profileId - Late.dev profile ID
+   * @param platform - Platform that was connected
+   * @returns Account details including account ID
+   */
+  async handleOAuthCallback(profileId: string, platform: string): Promise<any> {
+    if (!LATE_API_KEY) {
+      throw new Error('LATE_API_KEY is not configured');
+    }
+
+    console.log('[Late Service] Handling OAuth callback:', { profileId, platform });
+
+    // Fetch accounts for this profile to get the newly connected account
+    const accountsData = await this.getAccounts(profileId);
+
+    // Find the account that matches the platform
+    const connectedAccount = accountsData.accounts?.find((acc: any) =>
+      acc.platform === platform && acc.isActive
+    );
+
+    if (!connectedAccount) {
+      console.error('[Late Service] No active account found for platform:', { profileId, platform });
+      throw new Error(`No active ${platform} account found for profile ${profileId}`);
+    }
+
+    console.log('[Late Service] OAuth callback successful:', {
+      accountId: connectedAccount._id,
+      platform: connectedAccount.platform,
+      username: connectedAccount.username,
+      displayName: connectedAccount.displayName,
+    });
+
+    return connectedAccount;
   },
 };

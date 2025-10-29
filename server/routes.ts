@@ -369,6 +369,196 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ===== Phase 7: Social Account Connection (OAuth) =====
+
+  /**
+   * GET /api/social/connect/:platform
+   * Generate Late.dev OAuth URL for connecting a social account
+   */
+  app.get("/api/social/connect/:platform", async (req, res) => {
+    try {
+      const { platform } = req.params;
+      const userId = req.userId!;
+
+      console.log('[OAuth] Connect request:', { userId, platform });
+
+      // Validate platform
+      const supportedPlatforms = ['instagram', 'tiktok', 'youtube', 'facebook', 'twitter', 'linkedin', 'threads', 'pinterest', 'reddit', 'bluesky'];
+      if (!supportedPlatforms.includes(platform.toLowerCase())) {
+        return res.status(400).json({
+          error: 'Unsupported platform',
+          message: `Platform "${platform}" is not supported. Supported platforms: ${supportedPlatforms.join(', ')}`,
+        });
+      }
+
+      // Get user's Late.dev profile ID
+      const user = await storage.getUser(userId);
+      if (!user?.lateProfileId) {
+        console.error('[OAuth] User has no Late profile:', userId);
+        return res.status(400).json({
+          error: 'No Late.dev profile',
+          message: 'Please create a Late.dev profile first',
+        });
+      }
+
+      // Generate OAuth redirect URL (frontend callback page)
+      const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5000'}/oauth-callback`;
+
+      // Generate Late.dev OAuth URL
+      const connectUrl = lateService.generateConnectUrl(
+        user.lateProfileId,
+        platform.toLowerCase(),
+        redirectUrl
+      );
+
+      console.log('[OAuth] Connect URL generated:', { userId, platform, profileId: user.lateProfileId });
+
+      res.json({
+        success: true,
+        connectUrl,
+        platform,
+        profileId: user.lateProfileId,
+      });
+    } catch (error: any) {
+      console.error('[OAuth] Error generating connect URL:', error);
+      res.status(500).json({
+        error: 'Failed to generate connect URL',
+        details: error.message,
+      });
+    }
+  });
+
+  /**
+   * POST /api/social/callback
+   * Handle OAuth callback from Late.dev
+   *
+   * Expected query params from Late.dev redirect:
+   * - connected: platform name (e.g., "instagram")
+   * - profileId: Late.dev profile ID
+   * - username: Connected account username
+   *
+   * Or on error:
+   * - error: error type
+   * - platform: platform name
+   */
+  app.post("/api/social/callback", async (req, res) => {
+    try {
+      const { connected, profileId, username, error, platform } = req.body;
+      const userId = req.userId!;
+
+      console.log('[OAuth Callback] Received:', { connected, profileId, username, error, platform, userId });
+
+      // Handle error case
+      if (error) {
+        console.error('[OAuth Callback] Connection failed:', { error, platform, userId });
+        return res.status(400).json({
+          success: false,
+          error: 'Connection failed',
+          message: `Failed to connect ${platform || 'account'}. Please try again.`,
+          errorDetails: error,
+        });
+      }
+
+      // Validate required parameters
+      if (!connected || !profileId || !username) {
+        return res.status(400).json({
+          error: 'Invalid callback data',
+          message: 'Missing required parameters from OAuth callback',
+        });
+      }
+
+      // Verify the profileId matches the user's profile
+      const user = await storage.getUser(userId);
+      if (!user?.lateProfileId || user.lateProfileId !== profileId) {
+        console.error('[OAuth Callback] Profile ID mismatch:', {
+          userId,
+          userProfileId: user?.lateProfileId,
+          callbackProfileId: profileId,
+        });
+        return res.status(403).json({
+          error: 'Profile mismatch',
+          message: 'The connected profile does not match your account',
+        });
+      }
+
+      // Fetch full account details from Late.dev
+      const accountDetails = await lateService.handleOAuthCallback(profileId, connected);
+
+      // Store the account ID in the user record
+      // Note: This stores only ONE account ID. For multiple accounts, you'd need a separate table.
+      await storage.updateUser(userId, {
+        lateAccountId: accountDetails._id,
+      });
+
+      console.log('[OAuth Callback] Account connected successfully:', {
+        userId,
+        platform: connected,
+        username,
+        accountId: accountDetails._id,
+      });
+
+      res.json({
+        success: true,
+        message: `Successfully connected ${connected} account`,
+        account: {
+          platform: connected,
+          username,
+          accountId: accountDetails._id,
+          displayName: accountDetails.displayName,
+          profilePicture: accountDetails.profilePicture,
+        },
+      });
+    } catch (error: any) {
+      console.error('[OAuth Callback] Error handling callback:', error);
+      res.status(500).json({
+        error: 'Failed to complete connection',
+        details: error.message,
+      });
+    }
+  });
+
+  /**
+   * GET /api/social/accounts
+   * List all connected social accounts for the authenticated user
+   */
+  app.get("/api/social/accounts", async (req, res) => {
+    try {
+      const userId = req.userId!;
+
+      console.log('[Social Accounts] Fetching accounts for user:', userId);
+
+      // Get user's Late.dev profile ID
+      const user = await storage.getUser(userId);
+      if (!user?.lateProfileId) {
+        console.error('[Social Accounts] User has no Late profile:', userId);
+        return res.json({
+          accounts: [],
+          message: 'No Late.dev profile configured',
+        });
+      }
+
+      // Fetch accounts from Late.dev
+      const accountsData = await lateService.getAccounts(user.lateProfileId);
+
+      console.log('[Social Accounts] Accounts fetched:', {
+        userId,
+        count: accountsData.accounts?.length || 0,
+      });
+
+      res.json({
+        success: true,
+        accounts: accountsData.accounts || [],
+        profileId: user.lateProfileId,
+      });
+    } catch (error: any) {
+      console.error('[Social Accounts] Error fetching accounts:', error);
+      res.status(500).json({
+        error: 'Failed to fetch accounts',
+        details: error.message,
+      });
+    }
+  });
+
   // GET /api/videos/:id - Get task details with projects and exports
   app.get("/api/videos/:id", async (req, res) => {
     try {
