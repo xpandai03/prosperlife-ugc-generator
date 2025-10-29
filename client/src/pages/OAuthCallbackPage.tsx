@@ -25,19 +25,55 @@ export default function OAuthCallbackPage() {
       const error = urlParams.get('error');
       const platform = urlParams.get('platform');
 
-      // Handle error case
+      // Log all callback parameters for debugging
+      console.log('[OAuth Callback] Received parameters:', {
+        connected,
+        profileId,
+        username: username ? `${username.substring(0, 3)}***` : null,
+        error,
+        platform,
+        fullUrl: window.location.href,
+      });
+
+      // Handle error case with platform-specific messages
       if (error) {
+        console.error('[OAuth Callback] Connection failed:', { error, platform });
+
+        // Platform-specific error messages
+        const errorMessages: Record<string, string> = {
+          youtube: 'YouTube connection failed. Please ensure you have a YouTube channel and the YouTube Data API is enabled.',
+          instagram: 'Instagram connection failed. Please try again or check your Instagram account permissions.',
+          tiktok: 'TikTok connection failed. Please ensure you\'re using a TikTok Business account.',
+          facebook: 'Facebook connection failed. Please check your page permissions.',
+          twitter: 'Twitter (X) connection failed. Please try again.',
+          linkedin: 'LinkedIn connection failed. Please check your account permissions.',
+        };
+
+        const platformMessage = platform && errorMessages[platform.toLowerCase()]
+          ? errorMessages[platform.toLowerCase()]
+          : `Failed to connect ${platform || 'account'}`;
+
         setStatus('error');
-        setMessage(`Failed to connect ${platform || 'account'}. ${error}`);
+        setMessage(`${platformMessage}\n\nError code: ${error}`);
         return;
       }
 
       // Validate required parameters
       if (!connected || !profileId || !username) {
+        console.error('[OAuth Callback] Missing required parameters:', {
+          hasConnected: !!connected,
+          hasProfileId: !!profileId,
+          hasUsername: !!username,
+        });
         setStatus('error');
         setMessage('Invalid callback parameters. Please try connecting again.');
         return;
       }
+
+      console.log('[OAuth Callback] Sending success data to backend:', {
+        platform: connected,
+        profileId,
+      });
 
       // Send callback data to backend
       const authHeaders = await getAuthHeaders();
@@ -56,10 +92,16 @@ export default function OAuthCallbackPage() {
 
       if (!response.ok) {
         const errorData = await response.json();
+        console.error('[OAuth Callback] Backend error:', errorData);
         throw new Error(errorData.message || 'Failed to complete connection');
       }
 
       const data = await response.json();
+
+      console.log('[OAuth Callback] Connection completed successfully:', {
+        platform: connected,
+        username: data.account.username,
+      });
 
       // Success!
       setStatus('success');
