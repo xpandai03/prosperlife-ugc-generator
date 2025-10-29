@@ -133,6 +133,71 @@ export default function SocialAccountsPage() {
   const handleConnect = async (platform: string) => {
     setConnectingPlatform(platform);
 
+    // CRITICAL: Open popup IMMEDIATELY (within user gesture context)
+    // to avoid browser popup blocker
+    const width = 600;
+    const height = 700;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+
+    const popup = window.open(
+      'about:blank',
+      `Connect ${platform}`,
+      `width=${width},height=${height},left=${left},top=${top},scrollbars=yes`
+    );
+
+    if (!popup) {
+      toast({
+        title: 'Pop-up blocked',
+        description: 'Please allow pop-ups for this site to connect accounts',
+        variant: 'destructive',
+      });
+      setConnectingPlatform(null);
+      return;
+    }
+
+    // Show loading state in popup
+    popup.document.write(`
+      <html>
+        <head>
+          <title>Connecting...</title>
+          <style>
+            body {
+              font-family: system-ui, -apple-system, sans-serif;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              height: 100vh;
+              margin: 0;
+              background: #f9fafb;
+            }
+            .loading {
+              text-align: center;
+            }
+            .spinner {
+              border: 3px solid #e5e7eb;
+              border-top: 3px solid #8b5cf6;
+              border-radius: 50%;
+              width: 40px;
+              height: 40px;
+              animation: spin 1s linear infinite;
+              margin: 0 auto 16px;
+            }
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="loading">
+            <div class="spinner"></div>
+            <p>Connecting to ${platform}...</p>
+          </div>
+        </body>
+      </html>
+    `);
+
     try {
       const authHeaders = await getAuthHeaders();
       const response = await fetch(`/api/social/connect/${platform}`, {
@@ -141,32 +206,14 @@ export default function SocialAccountsPage() {
 
       if (!response.ok) {
         const errorData = await response.json();
+        popup.close();
         throw new Error(errorData.message || errorData.error || 'Failed to generate connect URL');
       }
 
       const data = await response.json();
 
-      // Open OAuth URL in new window
-      const width = 600;
-      const height = 700;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-
-      const popup = window.open(
-        data.connectUrl,
-        `Connect ${platform}`,
-        `width=${width},height=${height},left=${left},top=${top},scrollbars=yes`
-      );
-
-      if (!popup) {
-        toast({
-          title: 'Pop-up blocked',
-          description: 'Please allow pop-ups for this site to connect accounts',
-          variant: 'destructive',
-        });
-        setConnectingPlatform(null);
-        return;
-      }
+      // Navigate popup to OAuth URL
+      popup.location.href = data.connectUrl;
 
       // Listen for OAuth callback
       const checkPopupClosed = setInterval(() => {
@@ -182,6 +229,9 @@ export default function SocialAccountsPage() {
 
     } catch (error: any) {
       console.error('Error connecting account:', error);
+      if (popup && !popup.closed) {
+        popup.close();
+      }
       toast({
         title: 'Connection failed',
         description: error.message || 'Failed to connect account',
