@@ -388,16 +388,22 @@ export const lateService = {
     });
 
     try {
-      // Make authenticated request with redirect: 'manual' to capture the 302 Location header
+      // Make authenticated request with redirect: 'manual' to capture redirects
       const response = await fetch(connectEndpoint, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${LATE_API_KEY}`,
         },
-        redirect: 'manual', // Don't auto-follow redirects - we need the Location header
+        redirect: 'manual', // Don't auto-follow redirects
       });
 
-      // Late.dev returns 302 with Location header pointing to OAuth page
+      console.log('[Late Service] Late.dev response received:', {
+        status: response.status,
+        statusText: response.statusText,
+        contentType: response.headers.get('content-type'),
+      });
+
+      // Handle 302/301 redirect response (older API behavior)
       if (response.status === 302 || response.status === 301) {
         const oauthUrl = response.headers.get('location');
 
@@ -409,15 +415,48 @@ export const lateService = {
           throw new Error('Late.dev redirect missing Location header');
         }
 
-        console.log('[Late Service] OAuth URL extracted from redirect:', {
+        console.log('[Late Service] OAuth URL extracted from Location header:', {
           oauthUrl: oauthUrl.substring(0, 100) + '...',
-          status: response.status,
+          method: 'redirect',
         });
 
         return oauthUrl;
       }
 
-      // Handle non-redirect responses (errors)
+      // Handle 200 JSON response with authUrl (current API behavior)
+      if (response.status === 200) {
+        const responseText = await response.text();
+        let data;
+
+        try {
+          data = JSON.parse(responseText);
+        } catch (parseError) {
+          console.error('[Late Service] Failed to parse 200 response as JSON:', {
+            responseText: responseText.substring(0, 200),
+            parseError,
+          });
+          throw new Error(`Late.dev returned 200 but response is not valid JSON: ${responseText.substring(0, 100)}`);
+        }
+
+        // Extract authUrl from JSON response
+        if (data.authUrl) {
+          console.log('[Late Service] OAuth URL extracted from JSON authUrl field:', {
+            authUrl: data.authUrl.substring(0, 100) + '...',
+            method: 'json',
+          });
+
+          return data.authUrl;
+        }
+
+        // 200 response but no authUrl field
+        console.error('[Late Service] 200 response missing authUrl field:', {
+          data,
+          availableFields: Object.keys(data),
+        });
+        throw new Error('Late.dev returned 200 but JSON response missing authUrl field');
+      }
+
+      // Handle error responses (4xx, 5xx)
       const errorText = await response.text();
       let errorData;
       try {
@@ -426,11 +465,11 @@ export const lateService = {
         errorData = errorText;
       }
 
-      console.error('[Late Service] Unexpected response from connect endpoint:', {
+      console.error('[Late Service] Error response from connect endpoint:', {
         status: response.status,
         statusText: response.statusText,
         error: errorData,
-        endpoint: connectEndpoint,
+        endpoint: connectEndpoint.substring(0, 100) + '...',
       });
 
       throw new Error(`Late.dev connect endpoint returned ${response.status}: ${errorText}`);
