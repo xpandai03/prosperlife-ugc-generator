@@ -282,9 +282,20 @@ export const lateService = {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        console.error('[Late Service] Failed to fetch profiles:', error);
-        throw new Error(`Failed to fetch profiles: ${response.status}`);
+        const errorText = await response.text();
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = errorText;
+        }
+        console.error('[Late Service] Failed to fetch profiles:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData,
+          url: `${LATE_BASE_URL}/profiles`
+        });
+        throw new Error(`Failed to fetch profiles (${response.status}): ${errorText}`);
       }
 
       const data = await response.json();
