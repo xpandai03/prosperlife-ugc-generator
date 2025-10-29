@@ -495,7 +495,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Generate OAuth redirect URL (frontend callback page)
-      const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5000'}/oauth-callback`;
+      // Auto-detect frontend URL from request origin for production compatibility
+      const origin = req.headers.origin || req.headers.referer?.split('/').slice(0, 3).join('/');
+      const frontendUrl = process.env.FRONTEND_URL || origin || 'http://localhost:5000';
+      const redirectUrl = `${frontendUrl}/oauth-callback`;
+
+      console.log('[OAuth] Redirect URL:', { origin, frontendUrl, redirectUrl });
 
       // Generate Late.dev OAuth URL
       const connectUrl = lateService.generateConnectUrl(
