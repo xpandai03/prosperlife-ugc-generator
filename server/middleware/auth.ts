@@ -68,20 +68,51 @@ export async function requireAuth(
     }
 
     // Ensure user exists in database (auto-create if first time)
-    try {
-      const existingUser = await storage.getUser(user.id);
+    let existingUser = await storage.getUser(user.id);
 
-      if (!existingUser) {
-        console.log(`Creating new user in database: ${user.id} (${user.email})`);
+    if (!existingUser) {
+      console.log(`[Auth Middleware] User not found in DB, creating: ${user.id} (${user.email})`);
+      try {
         await storage.createUser({
           id: user.id,
           email: user.email || 'unknown@example.com',
           fullName: user.user_metadata?.full_name || null,
         });
+        console.log(`[Auth Middleware] User created successfully: ${user.id}`);
+
+        // Verify user was created
+        existingUser = await storage.getUser(user.id);
+        if (!existingUser) {
+          console.error(`[Auth Middleware] CRITICAL: User creation succeeded but getUser returned null for ${user.id}`);
+          res.status(500).json({
+            error: 'Internal Server Error',
+            message: 'Failed to create user record. Please try again or contact support.',
+          });
+          return;
+        }
+      } catch (dbError: any) {
+        console.error('[Auth Middleware] Failed to create user in database:', dbError);
+        // Check if it's a duplicate key error (user created by trigger in parallel)
+        if (dbError.code === '23505' || dbError.message?.includes('duplicate key')) {
+          console.log(`[Auth Middleware] User ${user.id} already exists (parallel creation), continuing...`);
+          // Fetch again in case it was created by trigger
+          existingUser = await storage.getUser(user.id);
+          if (!existingUser) {
+            res.status(500).json({
+              error: 'Internal Server Error',
+              message: 'User synchronization error. Please log out and log back in.',
+            });
+            return;
+          }
+        } else {
+          // Other database error - fail the request
+          res.status(500).json({
+            error: 'Internal Server Error',
+            message: 'Failed to initialize user account. Please try again.',
+          });
+          return;
+        }
       }
-    } catch (dbError) {
-      console.error('Failed to ensure user in database:', dbError);
-      // Continue anyway - user is authenticated, database issue shouldn't block request
     }
 
     // Attach user ID to request for downstream handlers

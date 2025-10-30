@@ -891,6 +891,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // POST /api/social/post - Post a clip to social media
   app.post("/api/social/post", async (req, res) => {
     try {
+      // Defensive check: Ensure userId is present (should be set by auth middleware)
+      if (!req.userId) {
+        console.error('[Social Post] CRITICAL: req.userId is missing despite passing auth middleware');
+        return res.status(401).json({
+          error: 'Authentication error',
+          message: 'User ID not found in request. Please log out and log back in.',
+        });
+      }
+
+      console.log(`[Social Post] Request from user: ${req.userId}`);
+
       // Validate input
       const validation = postToSocialSchema.safeParse(req.body);
       if (!validation.success) {
@@ -970,6 +981,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const socialPost = await storage.createSocialPost({
         projectId,
         taskId: project.taskId,
+        userId: req.userId!, // ✅ FIX: Add required userId from authenticated session
         platform,
         caption: caption || '',
         status: 'posting',
