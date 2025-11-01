@@ -25,8 +25,10 @@ import { eq, desc } from "drizzle-orm";
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, updates: Partial<InsertUser>): Promise<User | undefined>;
+  updateUserIdByEmail(email: string, newId: string): Promise<User | undefined>;
 
   // Tasks
   createTask(task: InsertTask): Promise<Task>;
@@ -67,6 +69,17 @@ export class DatabaseStorage implements IStorage {
     return user || undefined;
   }
 
+  /**
+   * Find user by email (for email-based reconciliation)
+   * Used when Supabase auth ID doesn't match Neon DB user ID
+   */
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    console.log('[Storage.getUserByEmail] Email:', email);
+    console.log('[Storage.getUserByEmail] Found user:', user ? user.id : 'not found');
+    return user || undefined;
+  }
+
   async createUser(insertUser: InsertUser): Promise<User> {
     const [user] = await db.insert(users).values(insertUser).returning();
     return user;
@@ -78,6 +91,26 @@ export class DatabaseStorage implements IStorage {
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(users.id, id))
       .returning();
+    return user || undefined;
+  }
+
+  /**
+   * Update user ID by email (for reconciling Supabase auth ID with Neon DB)
+   * This handles the case where user exists with same email but different ID
+   */
+  async updateUserIdByEmail(email: string, newId: string): Promise<User | undefined> {
+    console.log('[Storage.updateUserIdByEmail] Updating user ID', {
+      email,
+      newId,
+    });
+
+    const [user] = await db
+      .update(users)
+      .set({ id: newId, updatedAt: new Date() })
+      .where(eq(users.email, email))
+      .returning();
+
+    console.log('[Storage.updateUserIdByEmail] Update result:', user ? 'success' : 'failed');
     return user || undefined;
   }
 
