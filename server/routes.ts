@@ -1195,7 +1195,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/stripe/create-checkout-session', requireAuth, async (req, res) => {
     try {
       const userId = req.userId;
+
+      // Mobile Debug: Log request headers and auth state
+      const isMobile = /Mobile|Android|iPhone|iPad/i.test(req.headers['user-agent'] || '');
+      console.log('[Stripe Checkout Mobile Debug]', {
+        userId,
+        isMobile,
+        userAgent: req.headers['user-agent']?.substring(0, 100),
+        hasAuthHeader: !!req.headers.authorization,
+        authHeaderPrefix: req.headers.authorization?.substring(0, 20),
+      });
+
       if (!userId) {
+        console.error('[Stripe Checkout] CRITICAL: req.userId is null after auth middleware');
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
@@ -1204,8 +1216,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get user from database
       const user = await storage.getUser(userId);
       if (!user) {
+        console.error('[Stripe Checkout] CRITICAL: User not found in database:', userId);
         return res.status(404).json({ error: 'User not found' });
       }
+
+      console.log('[Stripe Checkout] User retrieved:', {
+        userId: user.id,
+        email: user.email,
+        subscriptionStatus: user.subscriptionStatus,
+      });
 
       // Check if user already has Pro subscription
       if (user.subscriptionStatus === 'pro') {

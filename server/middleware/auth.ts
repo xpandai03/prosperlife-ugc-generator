@@ -36,8 +36,25 @@ export async function requireAuth(
 ): Promise<void> {
   try {
     const authHeader = req.headers.authorization;
+    const isMobile = /Mobile|Android|iPhone|iPad/i.test(req.headers['user-agent'] || '');
+
+    // Mobile Debug: Log initial auth state
+    if (isMobile) {
+      console.log('[Auth Middleware Mobile Debug]', {
+        path: req.path,
+        hasAuthHeader: !!authHeader,
+        headerFormat: authHeader?.substring(0, 20),
+        userAgent: req.headers['user-agent']?.substring(0, 80),
+      });
+    }
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      console.error('[Auth Middleware] Missing or invalid auth header', {
+        path: req.path,
+        isMobile,
+        hasHeader: !!authHeader,
+        headerStart: authHeader?.substring(0, 10),
+      });
       res.status(401).json({
         error: 'Unauthorized',
         message: 'Missing or invalid authorization header. Please provide a Bearer token.',
@@ -48,6 +65,7 @@ export async function requireAuth(
     const token = authHeader.split('Bearer ')[1];
 
     if (!token) {
+      console.error('[Auth Middleware] No token in Bearer header', { path: req.path, isMobile });
       res.status(401).json({
         error: 'Unauthorized',
         message: 'No token provided in authorization header.',
@@ -59,7 +77,12 @@ export async function requireAuth(
     const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
 
     if (error || !user) {
-      console.error('Auth middleware error:', error?.message || 'User not found');
+      console.error('[Auth Middleware] Token validation failed:', {
+        error: error?.message || 'User not found',
+        path: req.path,
+        isMobile,
+        tokenLength: token.length,
+      });
       res.status(401).json({
         error: 'Unauthorized',
         message: 'Invalid or expired token. Please log in again.',
@@ -67,11 +90,24 @@ export async function requireAuth(
       return;
     }
 
+    if (isMobile) {
+      console.log('[Auth Middleware Mobile Debug] Token validated:', {
+        userId: user.id,
+        email: user.email,
+        path: req.path,
+      });
+    }
+
     // Ensure user exists in database (auto-create if first time)
+    // Mobile Fix: Retry with exponential backoff for slow network/trigger race conditions
     let existingUser = await storage.getUser(user.id);
 
     if (!existingUser) {
       console.log(`[Auth Middleware] User not found in DB, creating: ${user.id} (${user.email})`);
+
+      // Helper function to wait with exponential backoff
+      const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
       try {
         await storage.createUser({
           id: user.id,
@@ -92,15 +128,34 @@ export async function requireAuth(
         }
       } catch (dbError: any) {
         console.error('[Auth Middleware] Failed to create user in database:', dbError);
+
         // Check if it's a duplicate key error (user created by trigger in parallel)
         if (dbError.code === '23505' || dbError.message?.includes('duplicate key')) {
-          console.log(`[Auth Middleware] User ${user.id} already exists (parallel creation), continuing...`);
-          // Fetch again in case it was created by trigger
-          existingUser = await storage.getUser(user.id);
+          console.log(`[Auth Middleware] User ${user.id} already exists (parallel creation), retrying with backoff...`);
+
+          // Mobile Fix: Retry up to 3 times with exponential backoff (100ms, 300ms, 900ms)
+          let retryCount = 0;
+          const maxRetries = 3;
+
+          while (retryCount < maxRetries && !existingUser) {
+            const backoffMs = 100 * Math.pow(3, retryCount); // 100ms, 300ms, 900ms
+            console.log(`[Auth Middleware] Retry ${retryCount + 1}/${maxRetries} after ${backoffMs}ms...`);
+            await wait(backoffMs);
+
+            existingUser = await storage.getUser(user.id);
+            if (existingUser) {
+              console.log(`[Auth Middleware] User found on retry ${retryCount + 1}: ${user.id}`);
+              break;
+            }
+            retryCount++;
+          }
+
+          // If still not found after retries, fail with helpful error
           if (!existingUser) {
+            console.error(`[Auth Middleware] CRITICAL: User ${user.id} not found after ${maxRetries} retries (total wait: ${100 + 300 + 900}ms)`);
             res.status(500).json({
               error: 'Internal Server Error',
-              message: 'User synchronization error. Please log out and log back in.',
+              message: 'Account synchronization in progress. Please wait a moment and try again.',
             });
             return;
           }
