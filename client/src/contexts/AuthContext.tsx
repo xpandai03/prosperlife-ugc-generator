@@ -159,6 +159,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
+    const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+
+    if (isMobile) {
+      console.log('[Mobile Debug] Sign out initiated', {
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     try {
       const { error } = await supabase.auth.signOut();
       if (error) {
@@ -174,6 +182,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         title: "Logged out",
         description: "You have successfully logged out.",
       });
+
+      // Mobile Fix: Force redirect after signOut completes
+      // Mobile browsers need explicit navigation after auth state changes
+      if (isMobile) {
+        console.log('[Mobile Debug] Sign out complete, redirecting...', {
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // Small delay to ensure toast is visible, then redirect
+      setTimeout(() => {
+        window.location.href = "/";
+      }, 500);
     } catch (error) {
       toast({
         variant: "destructive",

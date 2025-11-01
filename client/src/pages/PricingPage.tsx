@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { ensureSessionReady } from "@/lib/supabase";
 
 interface UserData {
   id: string;
@@ -36,16 +37,50 @@ export default function PricingPage() {
 
   const upgradeMutation = useMutation({
     mutationFn: async () => {
+      const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+
+      // Mobile Fix: Ensure session is fully synced before making API call
+      if (isMobile) {
+        console.log('[Mobile Debug] Pre-checkout session verification', {
+          timestamp: new Date().toISOString(),
+        });
+
+        const session = await ensureSessionReady(3, 300);
+        if (!session) {
+          throw new Error('Session not ready. Please wait a moment and try again.');
+        }
+
+        console.log('[Mobile Debug] Session verified, proceeding to checkout', {
+          userId: session.user.id,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
       const response = await apiRequest("POST", "/api/stripe/create-checkout-session");
       return await response.json();
     },
     onSuccess: (data: { success: boolean; url: string; sessionId: string }) => {
       if (data.success && data.url) {
+        const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+        if (isMobile) {
+          console.log('[Mobile Debug] Checkout session created, redirecting to Stripe', {
+            sessionId: data.sessionId,
+            timestamp: new Date().toISOString(),
+          });
+        }
         // Redirect to Stripe Checkout
         window.location.href = data.url;
       }
     },
     onError: (error: any) => {
+      const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+      if (isMobile) {
+        console.error('[Mobile Debug] Checkout error', {
+          error: error.message,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
       toast({
         title: "Error",
         description: error.message || "Failed to create checkout session. Please try again.",
