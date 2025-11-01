@@ -315,6 +315,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // POST /api/admin/upgrade-to-pro - Temporary endpoint to upgrade current user to Pro
+  app.post("/api/admin/upgrade-to-pro", requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+      const updatedUser = await storage.updateUser(userId, {
+        subscriptionStatus: 'pro',
+        subscriptionEndsAt: null,
+      });
+
+      if (!updatedUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      res.json({
+        success: true,
+        message: "Upgraded to Pro successfully",
+        user: {
+          id: updatedUser.id,
+          email: updatedUser.email,
+          subscriptionStatus: updatedUser.subscriptionStatus,
+        }
+      });
+    } catch (error: any) {
+      console.error("Error upgrading user:", error);
+      res.status(500).json({ error: error.message || "Failed to upgrade user" });
+    }
+  });
+
   // POST /api/process-video-advanced - Process video with custom parameters
   app.post("/api/process-video-advanced", requireAuth, async (req, res) => {
     try {
