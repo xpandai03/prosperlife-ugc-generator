@@ -249,18 +249,49 @@ export const kieService = {
       status = 'failed';
     }
 
-    // Extract result URLs
+    // Extract result URLs with robust fallback logic
     let resultUrls: string[] | undefined;
     if (status === 'ready') {
+      // Try multiple possible response structures
+      const rawData = data.data;
+
+      // First try provider-specific paths
+      let urls: any[] = [];
       if (provider.includes('veo3')) {
-        resultUrls = JSON.parse(data.data.resultUrls || '[]');
+        try {
+          urls = JSON.parse(rawData.resultUrls || '[]');
+        } catch {
+          urls = [];
+        }
       } else if (provider.includes('4o-image')) {
-        resultUrls = data.data.response?.result_urls || [];
+        urls = rawData.response?.result_urls || [];
       } else if (provider.includes('flux-kontext')) {
-        resultUrls = [data.data.response?.resultImageUrl];
+        const fluxUrl = rawData.response?.resultImageUrl;
+        if (fluxUrl) urls = [fluxUrl];
       }
 
+      // Fallback: check multiple possible URL fields
+      if (!urls || urls.length === 0) {
+        console.log('[KIE Service] Provider-specific path empty, trying fallbacks...');
+        console.log('[KIE Service] Raw response data:', JSON.stringify(rawData, null, 2));
+
+        urls =
+          rawData.outputs?.map((o: any) => o.url).filter(Boolean) ||
+          rawData.outputFiles?.filter(Boolean) ||
+          rawData.result?.map((r: any) => r.url).filter(Boolean) ||
+          rawData.records?.map((r: any) => r.fileUrl).filter(Boolean) ||
+          rawData.resources?.map((r: any) => r.url).filter(Boolean) ||
+          (rawData.resultUrl ? [rawData.resultUrl] : []) ||
+          (rawData.url ? [rawData.url] : []) ||
+          [];
+      }
+
+      resultUrls = urls.filter(Boolean); // Remove null/undefined
       console.log('[KIE Service] Generation complete, result URLs:', resultUrls);
+
+      if (!resultUrls || resultUrls.length === 0) {
+        console.warn('[KIE Service] ⚠️ No result URLs found in response! Check KIE API response structure.');
+      }
     }
 
     return {

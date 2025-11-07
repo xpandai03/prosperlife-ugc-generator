@@ -54,6 +54,22 @@ export function MediaPreviewCard({ asset }: MediaPreviewCardProps) {
   const [showPostModal, setShowPostModal] = useState(false);
   const [imageError, setImageError] = useState(false);
 
+  // Robust URL extraction with fallbacks
+  const getMediaUrl = (): string | null => {
+    return (
+      asset.resultUrl ||
+      (asset as any).result_url ||
+      asset.resultUrls?.[0] ||
+      asset.metadata?.resultUrls?.[0] ||
+      asset.metadata?.outputs?.[0]?.url ||
+      asset.metadata?.resultUrl ||
+      asset.apiResponse?.data?.resultUrl ||
+      null
+    );
+  };
+
+  const mediaUrl = getMediaUrl();
+
   // Format provider name for display
   const formatProviderName = (provider: string) => {
     const providerNames: Record<string, string> = {
@@ -95,11 +111,11 @@ export function MediaPreviewCard({ asset }: MediaPreviewCardProps) {
         )}
 
         {/* Ready State - Image */}
-        {asset.status === 'ready' && asset.type === 'image' && asset.resultUrl && (
+        {asset.status === 'ready' && asset.type === 'image' && mediaUrl && (
           <>
             {!imageError ? (
               <img
-                src={asset.resultUrl}
+                src={mediaUrl}
                 alt={asset.prompt}
                 className="w-full h-full object-cover"
                 loading="lazy"
@@ -115,9 +131,9 @@ export function MediaPreviewCard({ asset }: MediaPreviewCardProps) {
         )}
 
         {/* Ready State - Video */}
-        {asset.status === 'ready' && asset.type === 'video' && asset.resultUrl && (
+        {asset.status === 'ready' && asset.type === 'video' && mediaUrl && (
           <video
-            src={asset.resultUrl}
+            src={mediaUrl}
             controls
             className="w-full h-full object-cover"
             preload="metadata"
@@ -202,7 +218,7 @@ export function MediaPreviewCard({ asset }: MediaPreviewCardProps) {
       </CardContent>
 
       {/* Actions (only show for ready state) */}
-      {asset.status === 'ready' && asset.resultUrl && (
+      {asset.status === 'ready' && mediaUrl && (
         <CardFooter className="p-4 pt-0 flex flex-wrap gap-2">
           {/* Caption Button */}
           <Button
@@ -234,7 +250,7 @@ export function MediaPreviewCard({ asset }: MediaPreviewCardProps) {
             asChild
           >
             <a
-              href={asset.resultUrl}
+              href={mediaUrl}
               download
               target="_blank"
               rel="noopener noreferrer"
