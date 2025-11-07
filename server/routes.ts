@@ -1674,6 +1674,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             apiResponse: statusResult as any,
           });
 
+          // Debug: Log full KIE response structure
+          console.log('[DEBUG KIE RESPONSE] Full statusResult:', JSON.stringify(statusResult, null, 2));
+
           // Check if complete
           if (statusResult.status === 'ready') {
             // Extract URL from all possible KIE response paths
