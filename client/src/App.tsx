@@ -16,6 +16,7 @@ import BillingSettingsPage from "@/pages/settings/BillingSettingsPage";
 import CaptionSettingsPage from "@/pages/settings/CaptionSettingsPage";
 import OAuthCallbackPage from "@/pages/OAuthCallbackPage";
 import PricingPage from "@/pages/PricingPage";
+import AIStudioPage from "@/pages/AIStudioPage";
 import BillingSuccessPage from "@/pages/billing/SuccessPage";
 import BillingCancelPage from "@/pages/billing/CancelPage";
 import PreLoginPage from "@/pages/PreLoginPage";
@@ -54,6 +55,11 @@ function Router() {
         <Route path="/videos">
           <ProtectedRoute>
             <VideoListPage />
+          </ProtectedRoute>
+        </Route>
+        <Route path="/ai-studio">
+          <ProtectedRoute>
+            <AIStudioPage />
           </ProtectedRoute>
         </Route>
         <Route path="/details/:id">

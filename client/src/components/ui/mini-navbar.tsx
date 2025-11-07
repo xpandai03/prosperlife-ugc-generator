@@ -60,6 +60,7 @@ export function Navbar() {
 
   const navLinksData = [
     { label: 'My Videos', href: '/videos' },
+    { label: 'AI Studio', href: '/ai-studio' },
     { label: 'Socials', href: '/socials' },
     { label: 'Pricing', href: '/pricing' },
     { label: 'Settings', href: '/settings/billing' },

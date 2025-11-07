@@ -14,9 +14,9 @@ import { Sparkles, TrendingUp } from "lucide-react";
 interface LimitReachedDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  limitType: "video" | "post";
-  current: number;
-  limit: number;
+  limitType: "video" | "post" | "media";
+  current?: number;
+  limit?: number;
 }
 
 export function LimitReachedDialog({
@@ -26,7 +26,35 @@ export function LimitReachedDialog({
   current,
   limit,
 }: LimitReachedDialogProps) {
-  const isVideo = limitType === "video";
+  // Get limit-specific messaging
+  const getLimitMessage = () => {
+    switch (limitType) {
+      case "video":
+        return {
+          itemName: "videos",
+          defaultLimit: 3,
+        };
+      case "post":
+        return {
+          itemName: "posts",
+          defaultLimit: 3,
+        };
+      case "media":
+        return {
+          itemName: "AI generations",
+          defaultLimit: 10,
+        };
+      default:
+        return {
+          itemName: "items",
+          defaultLimit: 3,
+        };
+    }
+  };
+
+  const { itemName, defaultLimit } = getLimitMessage();
+  const displayLimit = limit ?? defaultLimit;
+  const displayCurrent = current ?? displayLimit;
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -41,9 +69,9 @@ export function LimitReachedDialog({
           <AlertDialogDescription className="text-center">
             You've reached your free tier limit of{" "}
             <span className="font-semibold text-foreground">
-              {limit} {isVideo ? "videos" : "posts"}
+              {displayLimit} {itemName}
             </span>{" "}
-            per month ({current}/{limit}).
+            per month ({displayCurrent}/{displayLimit}).
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -60,6 +88,10 @@ export function LimitReachedDialog({
             <li className="flex items-start gap-2">
               <span className="text-green-500 font-bold flex-shrink-0">✓</span>
               <span>Unlimited social media posts</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-green-500 font-bold flex-shrink-0">✓</span>
+              <span>Unlimited AI image & video generation</span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-green-500 font-bold flex-shrink-0">✓</span>
