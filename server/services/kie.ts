@@ -259,6 +259,8 @@ export const kieService = {
       } else if (provider.includes('flux-kontext')) {
         resultUrls = [data.data.response?.resultImageUrl];
       }
+
+      console.log('[KIE Service] Generation complete, result URLs:', resultUrls);
     }
 
     return {

@@ -1570,22 +1570,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
             assetId,
             status: statusResult.status,
             hasResult: !!statusResult.resultUrl,
+            resultUrl: statusResult.resultUrl,
           });
 
           // Update asset with current status
           await storage.updateMediaAsset(assetId, {
             status: statusResult.status,
             resultUrl: statusResult.resultUrl || undefined,
-            errorMessage: statusResult.error || undefined,
+            errorMessage: statusResult.metadata?.errorMessage || undefined,
             apiResponse: statusResult as any,
           });
 
           // Check if complete
           if (statusResult.status === 'ready') {
+            // Ensure result URL is saved
+            const finalResultUrl = statusResult.resultUrl;
+
             await storage.updateMediaAsset(assetId, {
+              status: 'ready',
+              resultUrl: finalResultUrl || undefined,
               completedAt: new Date(),
+              metadata: statusResult.metadata,
             });
-            console.log('[Media Generation] Completed successfully:', { assetId });
+
+            console.log(`[Media Generation] ✅ Generation completed for ${assetId}, URL: ${finalResultUrl}`);
             return;
           }
 
