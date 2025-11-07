@@ -13,6 +13,7 @@ import LoginPage from "@/pages/auth/LoginPage";
 import SignupPage from "@/pages/auth/SignupPage";
 import SocialAccountsPage from "@/pages/settings/SocialAccountsPage";
 import BillingSettingsPage from "@/pages/settings/BillingSettingsPage";
+import CaptionSettingsPage from "@/pages/settings/CaptionSettingsPage";
 import OAuthCallbackPage from "@/pages/OAuthCallbackPage";
 import PricingPage from "@/pages/PricingPage";
 import BillingSuccessPage from "@/pages/billing/SuccessPage";
@@ -73,6 +74,11 @@ function Router() {
         <Route path="/settings/billing">
           <ProtectedRoute>
             <BillingSettingsPage />
+          </ProtectedRoute>
+        </Route>
+        <Route path="/settings/caption-assistant">
+          <ProtectedRoute>
+            <CaptionSettingsPage />
           </ProtectedRoute>
         </Route>
 

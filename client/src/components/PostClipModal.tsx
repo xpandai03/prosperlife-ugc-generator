@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/queryClient';
+import { useToast } from '@/hooks/use-toast';
 import {
   Dialog,
   DialogContent,
@@ -12,7 +13,7 @@ import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { Label } from './ui/label';
 import { Alert, AlertDescription } from './ui/alert';
-import { CheckCircle2, XCircle, Loader2, ExternalLink } from 'lucide-react';
+import { CheckCircle2, XCircle, Loader2, ExternalLink, Sparkles } from 'lucide-react';
 
 interface PostClipModalProps {
   isOpen: boolean;
@@ -29,6 +30,40 @@ export function PostClipModal({
 }: PostClipModalProps) {
   const [caption, setCaption] = useState('');
   const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  // AI Caption Generation mutation
+  const generateMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', '/api/caption/generate', {
+        projectId,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.details || 'Failed to generate caption');
+      }
+
+      return await response.json();
+    },
+    onSuccess: (data) => {
+      setCaption(data.caption);
+      toast({
+        title: 'Caption generated! ✨',
+        description: 'You can edit it before posting.',
+      });
+    },
+    onError: (error: Error) => {
+      console.error('Caption generation failed:', error);
+      toast({
+        title: 'Failed to generate caption',
+        description: error.message || 'Using fallback caption.',
+        variant: 'destructive',
+      });
+      // Set fallback caption
+      setCaption('Check out my latest clip! 🎥✨');
+    },
+  });
 
   const postMutation = useMutation({
     mutationFn: async () => {
@@ -44,6 +79,10 @@ export function PostClipModal({
       queryClient.invalidateQueries({ queryKey: ['social-posts', projectId] });
     },
   });
+
+  const handleGenerateCaption = () => {
+    generateMutation.mutate();
+  };
 
   const handlePost = () => {
     postMutation.mutate();
@@ -71,15 +110,37 @@ export function PostClipModal({
           {postMutation.isIdle && (
             <>
               <div className="space-y-2">
-                <Label htmlFor="caption">Caption (optional)</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="caption">Caption (optional)</Label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleGenerateCaption}
+                    disabled={generateMutation.isPending || postMutation.isPending}
+                    className="text-xs h-7 gap-1"
+                    aria-label="Generate caption with AI"
+                  >
+                    {generateMutation.isPending ? (
+                      <>
+                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-3 w-3" aria-hidden="true" />
+                        Generate with AI
+                      </>
+                    )}
+                  </Button>
+                </div>
                 <Textarea
                   id="caption"
-                  placeholder="Add a caption for your Reel..."
+                  placeholder="Add a caption or generate with AI..."
                   value={caption}
                   onChange={(e) => setCaption(e.target.value)}
                   maxLength={2200}
                   rows={4}
-                  disabled={postMutation.isPending}
+                  disabled={postMutation.isPending || generateMutation.isPending}
                   aria-label="Instagram Reel caption"
                   aria-describedby="caption-counter"
                 />
