@@ -121,6 +121,7 @@ export const userUsage = pgTable("user_usage", {
   month: text("month").notNull(), // Format: YYYY-MM
   videosCreated: integer("videos_created").notNull().default(0),
   postsCreated: integer("posts_created").notNull().default(0),
+  mediaGenerationsCreated: integer("media_generations_created").notNull().default(0), // Phase 4
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
   updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
 }, (table) => ({
@@ -134,6 +135,41 @@ export const stripeEvents = pgTable("stripe_events", {
   eventType: text("event_type").notNull(),
   processedAt: timestamp("processed_at").notNull().default(sql`now()`),
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
+});
+
+// Media Assets table - tracks AI-generated media (Phase 4)
+export const mediaAssets = pgTable("media_assets", {
+  id: text("id").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+
+  // Provider and type
+  provider: text("provider").notNull(), // 'kie-veo3' | 'kie-4o-image' | 'kie-flux-kontext' | 'gemini-flash'
+  type: text("type").notNull(), // 'image' | 'video'
+
+  // Input data
+  prompt: text("prompt").notNull(),
+  referenceImageUrl: text("reference_image_url"),
+
+  // Generation tracking
+  status: text("status").notNull(), // 'processing' | 'ready' | 'error'
+  taskId: text("task_id"),
+
+  // Output data
+  resultUrl: text("result_url"),
+  resultUrls: jsonb("result_urls"),
+
+  // Error tracking
+  errorMessage: text("error_message"),
+  retryCount: integer("retry_count").default(0),
+
+  // Metadata
+  metadata: jsonb("metadata"),
+  apiResponse: jsonb("api_response"),
+
+  // Timestamps
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  completedAt: timestamp("completed_at"),
 });
 
 // Relations
@@ -192,6 +228,13 @@ export const socialPostsRelations = relations(socialPosts, ({ one }) => ({
   }),
 }));
 
+export const mediaAssetsRelations = relations(mediaAssets, ({ one }) => ({
+  user: one(users, {
+    fields: [mediaAssets.userId],
+    references: [users.id],
+  }),
+}));
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users);
 export const insertTaskSchema = createInsertSchema(tasks, {
@@ -244,6 +287,14 @@ export const insertStripeEventSchema = createInsertSchema(stripeEvents, {
   processedAt: true,
 });
 
+export const insertMediaAssetSchema = createInsertSchema(mediaAssets, {
+  createdAt: () => z.date().optional(),
+  updatedAt: () => z.date().optional(),
+}).omit({
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -271,3 +322,6 @@ export type InsertUserUsage = z.infer<typeof insertUserUsageSchema>;
 
 export type StripeEvent = typeof stripeEvents.$inferSelect;
 export type InsertStripeEvent = z.infer<typeof insertStripeEventSchema>;
+
+export type MediaAsset = typeof mediaAssets.$inferSelect;
+export type InsertMediaAsset = z.infer<typeof insertMediaAssetSchema>;

@@ -6,6 +6,7 @@ import {
   projects,
   exports,
   socialPosts,
+  mediaAssets,
   type User,
   type InsertUser,
   type Task,
@@ -18,6 +19,8 @@ import {
   type InsertExport,
   type SocialPost,
   type InsertSocialPost,
+  type MediaAsset,
+  type InsertMediaAsset,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
@@ -57,6 +60,12 @@ export interface IStorage {
   getSocialPost(id: number): Promise<SocialPost | undefined>;
   getSocialPostsByProject(projectId: string): Promise<SocialPost[]>;
   getSocialPostsByTask(taskId: string): Promise<SocialPost[]>;
+
+  // Media Assets (Phase 4)
+  createMediaAsset(asset: InsertMediaAsset): Promise<MediaAsset>;
+  getMediaAsset(id: string): Promise<MediaAsset | undefined>;
+  updateMediaAsset(id: string, updates: Partial<Omit<MediaAsset, 'id' | 'createdAt'>>): Promise<MediaAsset | undefined>;
+  getMediaAssetsByUser(userId: string): Promise<MediaAsset[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -240,6 +249,34 @@ export class DatabaseStorage implements IStorage {
       .from(socialPosts)
       .where(eq(socialPosts.taskId, taskId))
       .orderBy(desc(socialPosts.createdAt));
+  }
+
+  // Media Assets (Phase 4)
+  async createMediaAsset(asset: InsertMediaAsset): Promise<MediaAsset> {
+    const [created] = await db.insert(mediaAssets).values(asset).returning();
+    return created;
+  }
+
+  async getMediaAsset(id: string): Promise<MediaAsset | undefined> {
+    const [asset] = await db.select().from(mediaAssets).where(eq(mediaAssets.id, id));
+    return asset || undefined;
+  }
+
+  async updateMediaAsset(id: string, updates: Partial<Omit<MediaAsset, 'id' | 'createdAt'>>): Promise<MediaAsset | undefined> {
+    const [updated] = await db
+      .update(mediaAssets)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(mediaAssets.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getMediaAssetsByUser(userId: string): Promise<MediaAsset[]> {
+    return db
+      .select()
+      .from(mediaAssets)
+      .where(eq(mediaAssets.userId, userId))
+      .orderBy(desc(mediaAssets.createdAt));
   }
 }
 

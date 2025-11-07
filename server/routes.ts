@@ -6,14 +6,17 @@ import { klapService } from "./services/klap";
 import { lateService } from "./services/late";
 import { stripeService } from "./services/stripe";
 import { postToSocialSchema } from "./validators/social";
+import { generateMediaSchema, validateProviderType } from "./validators/mediaGen";
+import { generateMedia, checkMediaStatus } from "./services/mediaGen";
 import { supabaseAdmin } from "./services/supabaseAuth";
 import { requireAuth } from "./middleware/auth";
-import { checkVideoLimit, checkPostLimit, incrementVideoUsage, incrementPostUsage, getCurrentUsage, FREE_VIDEO_LIMIT, FREE_POST_LIMIT } from "./services/usageLimits";
+import { checkVideoLimit, checkPostLimit, checkMediaGenerationLimit, incrementVideoUsage, incrementPostUsage, incrementMediaGenerationUsage, getCurrentUsage, FREE_VIDEO_LIMIT, FREE_POST_LIMIT, FREE_MEDIA_GENERATION_LIMIT } from "./services/usageLimits";
 import { db } from "./db";
 import { stripeEvents } from "../shared/schema";
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import type Stripe from "stripe";
+import { v4 as uuidv4 } from "uuid";
 
 // Validation schemas
 const createVideoSchema = z.object({
@@ -1312,6 +1315,322 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
+
+  // ========================================
+  // AI MEDIA GENERATION ENDPOINTS (Phase 4)
+  // ========================================
+
+  /**
+   * POST /api/ai/generate-media
+   *
+   * Generate AI image or video
+   */
+  app.post("/api/ai/generate-media", requireAuth, async (req, res) => {
+    try {
+      console.log(`[AI Generate] Request from user: ${req.userId}`);
+
+      // Validate input
+      const validation = generateMediaSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          error: "Invalid input",
+          details: validation.error.errors,
+        });
+      }
+
+      const { prompt, provider, type, referenceImageUrl, options } = validation.data;
+
+      // Validate provider/type combination
+      if (!validateProviderType(provider, type)) {
+        return res.status(400).json({
+          error: "Invalid provider/type combination",
+          details: `Provider ${provider} does not support ${type} generation`,
+        });
+      }
+
+      // Check usage limit (Phase 4: Free tier limits)
+      const canGenerate = await checkMediaGenerationLimit(req.userId!);
+      if (!canGenerate) {
+        console.log('[AI Generate] Media generation limit reached:', req.userId);
+        return res.status(403).json({
+          error: 'Monthly media generation limit reached',
+          message: 'Free plan allows 10 AI generations per month. Upgrade to Pro for unlimited.',
+          limit: FREE_MEDIA_GENERATION_LIMIT,
+        });
+      }
+
+      console.log('[AI Generate] Starting generation:', { provider, type, prompt: prompt.substring(0, 50) });
+
+      // Create media asset record
+      const assetId = uuidv4();
+      const mediaAsset = await storage.createMediaAsset({
+        id: assetId,
+        userId: req.userId!,
+        provider,
+        type,
+        prompt,
+        referenceImageUrl: referenceImageUrl || null,
+        status: 'processing',
+        taskId: null,
+        resultUrl: null,
+        resultUrls: null,
+        errorMessage: null,
+        retryCount: 0,
+        metadata: options || null,
+        apiResponse: null,
+        completedAt: null,
+      });
+
+      console.log('[AI Generate] Created media asset:', assetId);
+
+      // Start generation in background
+      processMediaGeneration(assetId, {
+        provider,
+        type,
+        prompt,
+        referenceImageUrl,
+        options,
+      }).catch((error) => {
+        console.error('[AI Generate] Background processing error:', error);
+      });
+
+      // Increment usage counter
+      await incrementMediaGenerationUsage(req.userId!);
+
+      res.json({
+        success: true,
+        assetId,
+        status: 'processing',
+        message: 'Media generation started. Check status with GET /api/ai/media/:id',
+      });
+
+    } catch (error: any) {
+      console.error("[AI Generate] Error:", error);
+      res.status(500).json({
+        error: "Failed to start media generation",
+        details: error.message,
+      });
+    }
+  });
+
+  /**
+   * GET /api/ai/media/:id
+   *
+   * Get media asset status and details
+   */
+  app.get("/api/ai/media/:id", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const mediaAsset = await storage.getMediaAsset(id);
+      if (!mediaAsset) {
+        return res.status(404).json({ error: "Media asset not found" });
+      }
+
+      // Verify ownership
+      if (mediaAsset.userId !== req.userId) {
+        return res.status(404).json({ error: "Media asset not found" });
+      }
+
+      res.json({
+        success: true,
+        asset: mediaAsset,
+      });
+
+    } catch (error: any) {
+      console.error("[AI Media Get] Error:", error);
+      res.status(500).json({
+        error: "Failed to fetch media asset",
+        details: error.message,
+      });
+    }
+  });
+
+  /**
+   * GET /api/ai/media
+   *
+   * List all user's media assets (gallery)
+   */
+  app.get("/api/ai/media", requireAuth, async (req, res) => {
+    try {
+      const mediaAssets = await storage.getMediaAssetsByUser(req.userId!);
+
+      res.json({
+        success: true,
+        assets: mediaAssets,
+        total: mediaAssets.length,
+      });
+
+    } catch (error: any) {
+      console.error("[AI Media List] Error:", error);
+      res.status(500).json({
+        error: "Failed to fetch media assets",
+        details: error.message,
+      });
+    }
+  });
+
+  // ========================================
+  // BACKGROUND PROCESSING: Media Generation (Phase 4)
+  // ========================================
+
+  /**
+   * Background function to process media generation
+   * Polls KIE API every 30s until complete (max 20 minutes)
+   * Implements 3x retry with exponential backoff on failures
+   */
+  async function processMediaGeneration(
+    assetId: string,
+    params: {
+      provider: string;
+      type: string;
+      prompt: string;
+      referenceImageUrl?: string;
+      options?: any;
+    }
+  ): Promise<void> {
+    const maxAttempts = 40; // 40 * 30s = 20 minutes max polling
+    const pollInterval = 30000; // 30 seconds
+    const maxRetries = 3;
+    let retryCount = 0;
+
+    console.log('[Media Generation] Starting background processing:', {
+      assetId,
+      provider: params.provider,
+      type: params.type,
+    });
+
+    try {
+      // Step 1: Start generation
+      let generationResult;
+      let lastError: Error | null = null;
+
+      // Retry loop for initial generation
+      while (retryCount < maxRetries) {
+        try {
+          generationResult = await generateMedia(params);
+          console.log('[Media Generation] Generation started:', {
+            assetId,
+            taskId: generationResult.taskId,
+            status: generationResult.status,
+          });
+          break; // Success, exit retry loop
+        } catch (error: any) {
+          lastError = error;
+          retryCount++;
+          console.error(`[Media Generation] Attempt ${retryCount}/${maxRetries} failed:`, error);
+
+          if (retryCount < maxRetries) {
+            const backoffDelay = retryCount * 2000; // 2s, 4s, 6s
+            console.log(`[Media Generation] Retrying in ${backoffDelay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, backoffDelay));
+          }
+        }
+      }
+
+      // If all retries failed
+      if (!generationResult) {
+        throw lastError || new Error('Failed to start generation after retries');
+      }
+
+      // Update asset with taskId
+      await storage.updateMediaAsset(assetId, {
+        taskId: generationResult.taskId,
+        status: generationResult.status,
+        retryCount,
+      });
+
+      // If generation is already complete (e.g., Gemini Flash), update and return
+      if (generationResult.status === 'ready' && generationResult.resultUrl) {
+        await storage.updateMediaAsset(assetId, {
+          status: 'ready',
+          resultUrl: generationResult.resultUrl,
+          completedAt: new Date(),
+        });
+        console.log('[Media Generation] Completed synchronously:', { assetId });
+        return;
+      }
+
+      // Step 2: Poll for completion (async providers like KIE)
+      let pollAttempts = 0;
+
+      while (pollAttempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        pollAttempts++;
+
+        console.log(`[Media Generation] Polling attempt ${pollAttempts}/${maxAttempts} for asset ${assetId}`);
+
+        try {
+          const statusResult = await checkMediaStatus(
+            generationResult.taskId,
+            params.provider as any
+          );
+
+          console.log('[Media Generation] Status check result:', {
+            assetId,
+            status: statusResult.status,
+            hasResult: !!statusResult.resultUrl,
+          });
+
+          // Update asset with current status
+          await storage.updateMediaAsset(assetId, {
+            status: statusResult.status,
+            resultUrl: statusResult.resultUrl || undefined,
+            errorMessage: statusResult.error || undefined,
+            apiResponse: statusResult as any,
+          });
+
+          // Check if complete
+          if (statusResult.status === 'ready') {
+            await storage.updateMediaAsset(assetId, {
+              completedAt: new Date(),
+            });
+            console.log('[Media Generation] Completed successfully:', { assetId });
+            return;
+          }
+
+          if (statusResult.status === 'failed' || statusResult.status === 'error') {
+            console.error('[Media Generation] Generation failed:', {
+              assetId,
+              error: statusResult.error,
+            });
+            return;
+          }
+
+          // Continue polling if still processing
+        } catch (error: any) {
+          console.error(`[Media Generation] Polling error (attempt ${pollAttempts}):`, error);
+
+          // Don't fail immediately on polling errors, just log and continue
+          // Only fail if we've exhausted all attempts
+          if (pollAttempts >= maxAttempts) {
+            throw error;
+          }
+        }
+      }
+
+      // Timeout - max polling attempts reached
+      console.error('[Media Generation] Timeout: Max polling attempts reached:', { assetId });
+      await storage.updateMediaAsset(assetId, {
+        status: 'error',
+        errorMessage: 'Generation timeout: exceeded maximum polling time (20 minutes)',
+      });
+
+    } catch (error: any) {
+      console.error('[Media Generation] Fatal error:', error);
+
+      // Update asset with error status
+      try {
+        await storage.updateMediaAsset(assetId, {
+          status: 'error',
+          errorMessage: error.message || 'Unknown error occurred',
+          retryCount,
+        });
+      } catch (updateError) {
+        console.error('[Media Generation] Failed to update asset with error:', updateError);
+      }
+    }
+  }
 
   // ========================================
   // AI CAPTION GENERATION ENDPOINTS (Phase 2)
