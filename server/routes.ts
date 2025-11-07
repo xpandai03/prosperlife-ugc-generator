@@ -1674,23 +1674,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
             apiResponse: statusResult as any,
           });
 
-          // Debug: Log full KIE response structure
-          console.log('[DEBUG KIE RESPONSE] Full statusResult:', JSON.stringify(statusResult, null, 2));
-
           // Check if complete
           if (statusResult.status === 'ready') {
-            // Extract URL from all possible KIE response paths
-            const finalResultUrl =
-              statusResult.resultUrl ||
-              statusResult.metadata?.response?.resultUrls?.[0] ||
-              statusResult.metadata?.resultUrls?.[0] ||
-              statusResult.metadata?.outputs?.[0]?.url ||
-              statusResult.metadata?.resources?.[0]?.url ||
-              '';
+            // Extract URLs from KIE response (already extracted in kie.ts)
+            const resultUrls = statusResult.resultUrls || [];
+
+            // Validate we have at least one URL before marking as ready
+            if (resultUrls.length === 0) {
+              console.log('[KIE FIX] Generation marked ready but no URLs found yet, continuing to poll...');
+              continue; // Keep polling
+            }
+
+            // Get first valid URL
+            const finalResultUrl = resultUrls[0];
+
+            console.log('[KIE FIX ✅] Extracted resultUrls:', resultUrls);
+            console.log('[KIE FIX ✅] Storing result URL:', finalResultUrl);
 
             await storage.updateMediaAsset(assetId, {
               status: 'ready',
-              resultUrl: finalResultUrl || undefined,
+              resultUrl: finalResultUrl,
               completedAt: new Date(),
               metadata: statusResult.metadata,
             });

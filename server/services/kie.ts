@@ -255,42 +255,31 @@ export const kieService = {
       // Try multiple possible response structures
       const rawData = data.data;
 
-      // First try provider-specific paths
-      let urls: any[] = [];
-      if (provider.includes('veo3')) {
-        try {
-          urls = JSON.parse(rawData.resultUrls || '[]');
-        } catch {
-          urls = [];
-        }
-      } else if (provider.includes('4o-image')) {
-        urls = rawData.response?.result_urls || [];
-      } else if (provider.includes('flux-kontext')) {
-        const fluxUrl = rawData.response?.resultImageUrl;
-        if (fluxUrl) urls = [fluxUrl];
-      }
-
-      // Fallback: check multiple possible URL fields
-      if (!urls || urls.length === 0) {
-        console.log('[KIE Service] Provider-specific path empty, trying fallbacks...');
-        console.log('[KIE Service] Raw response data:', JSON.stringify(rawData, null, 2));
-
-        urls =
-          rawData.outputs?.map((o: any) => o.url).filter(Boolean) ||
-          rawData.outputFiles?.filter(Boolean) ||
-          rawData.result?.map((r: any) => r.url).filter(Boolean) ||
-          rawData.records?.map((r: any) => r.fileUrl).filter(Boolean) ||
-          rawData.resources?.map((r: any) => r.url).filter(Boolean) ||
-          (rawData.resultUrl ? [rawData.resultUrl] : []) ||
-          (rawData.url ? [rawData.url] : []) ||
-          [];
-      }
+      // Check ALL possible KIE response paths in priority order
+      let urls: any[] =
+        rawData.response?.resultUrls ||           // ✅ Primary KIE path (4o-image, veo3)
+        rawData.metadata?.response?.resultUrls ||  // Nested metadata path
+        rawData.response?.result_urls ||           // Snake_case variant
+        rawData.metadata?.resultUrls ||            // Direct metadata path
+        rawData.resultUrls ||                      // Direct path
+        (rawData.response?.resultUrl ? [rawData.response.resultUrl] : []) ||  // Single URL variant
+        (rawData.response?.resultImageUrl ? [rawData.response.resultImageUrl] : []) || // Flux kontext
+        rawData.outputs?.map((o: any) => o.url).filter(Boolean) ||
+        rawData.outputFiles?.filter(Boolean) ||
+        rawData.result?.map((r: any) => r.url).filter(Boolean) ||
+        rawData.records?.map((r: any) => r.fileUrl).filter(Boolean) ||
+        rawData.resources?.map((r: any) => r.url).filter(Boolean) ||
+        (rawData.resultUrl ? [rawData.resultUrl] : []) ||
+        (rawData.url ? [rawData.url] : []) ||
+        [];
 
       resultUrls = urls.filter(Boolean); // Remove null/undefined
-      console.log('[KIE Service] Generation complete, result URLs:', resultUrls);
+
+      console.log('[KIE FIX ✅] Extracted resultUrls:', resultUrls);
 
       if (!resultUrls || resultUrls.length === 0) {
-        console.warn('[KIE Service] ⚠️ No result URLs found in response! Check KIE API response structure.');
+        console.warn('[KIE Service] ⚠️ No result URLs found in response!');
+        console.log('[KIE Service] Raw response data:', JSON.stringify(rawData, null, 2));
       }
     }
 
