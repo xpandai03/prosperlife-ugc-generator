@@ -8,6 +8,7 @@ import { stripeService } from "./services/stripe";
 import { postToSocialSchema } from "./validators/social";
 import { generateMediaSchema, validateProviderType } from "./validators/mediaGen";
 import { generateMedia, checkMediaStatus } from "./services/mediaGen";
+import { GenerationMode, generatePrompt, formatICPForPrompt, formatSceneForPrompt } from "./prompts/ugc-presets";
 import { supabaseAdmin } from "./services/supabaseAuth";
 import { requireAuth } from "./middleware/auth";
 import { checkVideoLimit, checkPostLimit, checkMediaGenerationLimit, incrementVideoUsage, incrementPostUsage, incrementMediaGenerationUsage, getCurrentUsage, FREE_VIDEO_LIMIT, FREE_POST_LIMIT, FREE_MEDIA_GENERATION_LIMIT } from "./services/usageLimits";
@@ -38,6 +39,16 @@ const processVideoAdvancedSchema = z.object({
   email: z.string().email().optional(),
   targetClipCount: z.number().int().min(1).max(10),
   minimumDuration: z.number().int().min(1).max(180),
+});
+
+// Phase 4: UGC Preset Generation Schema
+const generateUGCPresetSchema = z.object({
+  productName: z.string().min(1).max(100),
+  productFeatures: z.string().min(10).max(500),
+  customerPersona: z.string(),
+  videoSetting: z.string(),
+  generationMode: z.enum(["nanobana+veo3", "veo3-only", "sora2"]),
+  productImageUrl: z.string().url().optional(),
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -1456,6 +1467,140 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("[AI Generate] Error:", error);
       res.status(500).json({
         error: "Failed to start media generation",
+        details: error.message,
+      });
+    }
+  });
+
+  /**
+   * POST /api/ai/generate-ugc-preset
+   *
+   * Generate UGC Ad using preset templates (Phase 4)
+   * Takes product brief and converts to prompt using preset templates
+   */
+  app.post("/api/ai/generate-ugc-preset", requireAuth, async (req, res) => {
+    try {
+      console.log(`[AI UGC Preset] Request from user: ${req.userId}`);
+
+      // Validate input
+      const validation = generateUGCPresetSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          error: "Invalid input",
+          details: validation.error.errors,
+        });
+      }
+
+      const {
+        productName,
+        productFeatures,
+        customerPersona,
+        videoSetting,
+        generationMode,
+        productImageUrl,
+      } = validation.data;
+
+      // Check usage limit
+      const canGenerate = await checkMediaGenerationLimit(req.userId!);
+      if (!canGenerate) {
+        console.log('[AI UGC Preset] Media generation limit reached:', req.userId);
+        return res.status(403).json({
+          error: 'Monthly media generation limit reached',
+          message: 'Free plan allows 10 AI generations per month. Upgrade to Pro for unlimited.',
+          limit: FREE_MEDIA_GENERATION_LIMIT,
+        });
+      }
+
+      // Convert form values to prompt variables
+      const promptVariables = {
+        product: productName,
+        features: productFeatures,
+        icp: formatICPForPrompt(customerPersona),
+        scene: formatSceneForPrompt(videoSetting),
+      };
+
+      console.log('[AI UGC Preset] Generating prompt with variables:', promptVariables);
+
+      // Generate prompt using preset templates
+      const generatedPrompt = generatePrompt(generationMode as GenerationMode, promptVariables);
+
+      console.log('[AI UGC Preset] Generated prompt (first 100 chars):', generatedPrompt.substring(0, 100));
+
+      // Determine provider based on mode
+      let provider: string;
+      let type: 'image' | 'video';
+
+      if (generationMode === 'nanobana+veo3') {
+        // Mode A: Start with NanoBanana image (will chain to Veo3 later)
+        provider = 'kie-flux-kontext'; // NanoBanana provider
+        type = 'image';
+      } else if (generationMode === 'veo3-only') {
+        // Mode B: Direct Veo3 video
+        provider = 'kie-veo3';
+        type = 'video';
+      } else {
+        // Mode C: Sora 2 video
+        provider = 'sora2'; // TODO: Add Sora provider to KIE service
+        type = 'video';
+      }
+
+      // Create media asset record
+      const assetId = uuidv4();
+      await storage.createMediaAsset({
+        id: assetId,
+        userId: req.userId!,
+        provider,
+        type,
+        prompt: generatedPrompt,
+        referenceImageUrl: productImageUrl || null,
+        status: 'processing',
+        taskId: null,
+        resultUrl: null,
+        resultUrls: null,
+        errorMessage: null,
+        retryCount: 0,
+        metadata: {
+          generationMode,
+          productBrief: {
+            productName,
+            productFeatures,
+            customerPersona,
+            videoSetting,
+          },
+        },
+        apiResponse: null,
+        completedAt: null,
+        generationMode: generationMode, // Store in schema field (Phase 5 support)
+        chainMetadata: generationMode === 'nanobana+veo3' ? { step: 'generating_image' } : null,
+      });
+
+      console.log('[AI UGC Preset] Created media asset:', assetId);
+
+      // Start generation in background
+      processMediaGeneration(assetId, {
+        provider,
+        type,
+        prompt: generatedPrompt,
+        referenceImageUrl: productImageUrl,
+        options: null,
+      }).catch((error) => {
+        console.error('[AI UGC Preset] Background processing error:', error);
+      });
+
+      // Increment usage counter
+      await incrementMediaGenerationUsage(req.userId!);
+
+      res.json({
+        success: true,
+        assetId,
+        status: 'processing',
+        message: 'UGC ad generation started with preset templates',
+      });
+
+    } catch (error: any) {
+      console.error("[AI UGC Preset] Error:", error);
+      res.status(500).json({
+        error: "Failed to start UGC generation",
         details: error.message,
       });
     }

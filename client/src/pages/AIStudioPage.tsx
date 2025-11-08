@@ -1,11 +1,11 @@
 /**
- * AI Studio Page - Phase 4.4
+ * AI Studio Page - Phase 4 (Redesigned)
  *
- * Main page for AI image and video generation
- * - Generation form with prompt input and provider selection
+ * Simplified UGC Ad Studio with preset prompt templates
+ * - 5-field product brief form (product, features, ICP, scene, mode)
+ * - Preset-based prompt generation (no manual prompts)
  * - Gallery view of all user's generated media assets
  * - Real-time status updates via polling
- * - Integration with caption generation and scheduling
  */
 
 import { useState } from "react";
@@ -30,12 +30,21 @@ import {
   Image as ImageIcon,
   Video as VideoIcon,
   Loader2,
+  Upload,
+  Info,
 } from "lucide-react";
 import { MediaPreviewCard } from "@/components/MediaPreviewCard";
 import { LimitReachedDialog } from "@/components/LimitReachedDialog";
 import { UGCAdPreviewModal } from "@/components/UGCAdPreviewModal";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { formatDistanceToNow } from "date-fns";
+import {
+  ICP_OPTIONS,
+  SCENE_OPTIONS,
+  MODE_OPTIONS,
+  formatICPForPrompt,
+  formatSceneForPrompt,
+} from "@/constants/ugc-form-options";
 
 // TypeScript interfaces
 interface MediaAsset {
@@ -71,11 +80,13 @@ interface GenerateMediaResponse {
 }
 
 export default function AIStudioPage() {
-  // Form state
-  const [prompt, setPrompt] = useState("");
-  const [provider, setProvider] = useState<string>("kie-4o-image");
-  const [type, setType] = useState<'image' | 'video'>('image');
-  const [referenceImageUrl, setReferenceImageUrl] = useState("");
+  // Form state - Phase 4 Simplified (5 fields)
+  const [productImage, setProductImage] = useState("");
+  const [productName, setProductName] = useState("");
+  const [productFeatures, setProductFeatures] = useState("");
+  const [customerPersona, setCustomerPersona] = useState(ICP_OPTIONS[0].value);
+  const [videoSetting, setVideoSetting] = useState(SCENE_OPTIONS[0].value);
+  const [generationMode, setGenerationMode] = useState(MODE_OPTIONS[0].value);
   const [showLimitDialog, setShowLimitDialog] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState<MediaAsset | null>(null);
 
@@ -104,24 +115,32 @@ export default function AIStudioPage() {
     staleTime: 5000, // Override global Infinity to allow refetch (5 seconds)
   });
 
-  // Generate media mutation
+  // Generate media mutation - Phase 4 (uses preset templates)
   const generateMutation = useMutation({
     mutationFn: async (params: {
-      prompt: string;
-      provider: string;
-      type: 'image' | 'video';
-      referenceImageUrl?: string;
+      productName: string;
+      productFeatures: string;
+      customerPersona: string;
+      videoSetting: string;
+      generationMode: string;
+      productImageUrl?: string;
     }) => {
-      const response = await apiRequest('POST', '/api/ai/generate-media', params);
+      const response = await apiRequest('POST', '/api/ai/generate-ugc-preset', params);
       return await response.json() as GenerateMediaResponse;
     },
     onSuccess: () => {
-      setPrompt(""); // Clear form
-      setReferenceImageUrl("");
+      // Clear form
+      setProductName("");
+      setProductFeatures("");
+      setProductImage("");
+      // Reset to defaults (don't clear dropdowns - keep user's last selection)
+
       queryClient.invalidateQueries({ queryKey: ['/api/ai/media'] });
+
+      const modeInfo = MODE_OPTIONS.find(m => m.value === generationMode);
       toast({
-        title: 'Generation started! ✨',
-        description: 'Check the gallery below for progress.',
+        title: 'UGC Ad generation started! 🎬',
+        description: `${modeInfo?.label || 'Your ad'} will be ready in ${modeInfo?.estimatedTime || '1-2 minutes'}`,
       });
     },
     onError: (error: any) => {
@@ -141,36 +160,55 @@ export default function AIStudioPage() {
     },
   });
 
-  // Handle type change (auto-switch provider - hardcoded for UGC ads)
-  const handleTypeChange = (newType: 'image' | 'video') => {
-    setType(newType);
-    if (newType === 'video') {
-      setProvider('kie-veo3'); // Hardcoded: KIE Veo3 for video
-    } else {
-      setProvider('kie-4o-image'); // Hardcoded: KIE 4O Image for images (fast)
-    }
-  };
-
-  // Handle form submission
+  // Handle form submission - Phase 4 (preset-based)
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // Validation
-    if (prompt.length < 10 || prompt.length > 1000) {
+    if (!productName.trim()) {
       toast({
-        title: 'Invalid prompt',
-        description: 'Prompt must be between 10 and 1000 characters',
+        title: 'Product name required',
+        description: 'Please enter your product name',
         variant: 'destructive',
       });
       return;
     }
 
-    // Generate
+    if (productName.length > 100) {
+      toast({
+        title: 'Product name too long',
+        description: 'Product name must be 100 characters or less',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!productFeatures.trim()) {
+      toast({
+        title: 'Product features required',
+        description: 'Please describe your product features',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (productFeatures.length < 10 || productFeatures.length > 500) {
+      toast({
+        title: 'Invalid features description',
+        description: 'Features must be between 10 and 500 characters',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // Generate with preset templates
     generateMutation.mutate({
-      prompt,
-      provider,
-      type,
-      referenceImageUrl: referenceImageUrl || undefined,
+      productName: productName.trim(),
+      productFeatures: productFeatures.trim(),
+      customerPersona,
+      videoSetting,
+      generationMode,
+      productImageUrl: productImage.trim() || undefined,
     });
   };
 
@@ -205,130 +243,210 @@ export default function AIStudioPage() {
           </a>
         </div>
 
-        {/* Generation Form Card */}
+        {/* Generation Form Card - Phase 4 Redesign */}
         <Card className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl shadow-2xl mb-12">
           <CardContent className="p-6 md:p-8">
             <form onSubmit={handleGenerate} className="space-y-6">
-              {/* Ad Format Selector (Image/Video) */}
-              <div className="space-y-2">
-                <Label className="text-white text-sm font-medium">Ad Format</Label>
-                <div className="flex gap-3">
-                  <Button
-                    type="button"
-                    variant={type === 'image' ? 'default' : 'outline'}
-                    onClick={() => handleTypeChange('image')}
-                    className={type === 'image' ? 'flex-1' : 'flex-1 bg-white/5 border-white/20 text-white hover:bg-white/10'}
-                  >
-                    <ImageIcon className="h-4 w-4 mr-2" />
-                    Image
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={type === 'video' ? 'default' : 'outline'}
-                    onClick={() => handleTypeChange('video')}
-                    className={type === 'video' ? 'flex-1' : 'flex-1 bg-white/5 border-white/20 text-white hover:bg-white/10'}
-                  >
-                    <VideoIcon className="h-4 w-4 mr-2" />
-                    Video
-                  </Button>
-                </div>
-                <p className="text-xs text-white/50">
-                  Choose what kind of ad you want to make
+              {/* Form Header */}
+              <div className="pb-4 border-b border-white/10">
+                <h2 className="text-lg font-semibold text-white mb-1">
+                  Product Brief
+                </h2>
+                <p className="text-sm text-white/60">
+                  Fill in the details below — AI will create an authentic UGC-style ad video
                 </p>
               </div>
 
-              {/* AI Model Info (Read-only) */}
-              <div className="rounded-lg bg-white/5 border border-white/10 px-4 py-3">
-                <p className="text-xs text-white/70">
-                  {type === 'video' ? (
-                    <>
-                      <span className="font-medium text-white">Powered by KIE Veo3</span> — 8-second UGC-style videos (16:9 format)
-                    </>
-                  ) : (
-                    <>
-                      <span className="font-medium text-white">Powered by KIE 4O Image</span> — Fast, realistic UGC ad images
-                    </>
-                  )}
-                </p>
-              </div>
-
-              {/* Scene Description */}
+              {/* 1. Product Image */}
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="prompt" className="text-white text-sm font-medium">
-                    Describe Your Scene
-                  </Label>
-                  <button
-                    type="button"
-                    className="text-white/50 hover:text-white/70 transition-colors"
-                    title="Tip: Pretend you're briefing a real influencer. Mention who's in the scene, what they're doing, and what they say about your product."
-                  >
-                    <span className="text-xs">ℹ️</span>
-                  </button>
-                </div>
-                <Textarea
-                  id="prompt"
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Example: A creator filming herself at home showing our collagen drink, explaining how it helps her skin glow and tastes amazing."
-                  rows={4}
-                  maxLength={1000}
-                  className="bg-white/10 border-white/20 text-white placeholder:text-white/50 resize-none"
+                <Label htmlFor="product-image" className="text-white text-sm font-medium flex items-center gap-2">
+                  <Upload className="h-4 w-4" />
+                  Product Image
+                  <span className="text-white/50 font-normal">(Optional)</span>
+                </Label>
+                <Input
+                  id="product-image"
+                  type="url"
+                  value={productImage}
+                  onChange={(e) => setProductImage(e.target.value)}
+                  placeholder="https://yourproduct.com/image.jpg"
+                  className="bg-white/10 border-white/20 text-white placeholder:text-white/50"
                 />
-                <div className="flex justify-between items-start">
-                  <p className="text-xs text-white/50 max-w-[70%]">
-                    Describe the setting, action, and product details as if briefing a content creator
+                <p className="text-xs text-white/50">
+                  Paste a URL to your product photo for visual reference
+                </p>
+              </div>
+
+              {/* 2. Product Name */}
+              <div className="space-y-2">
+                <Label htmlFor="product-name" className="text-white text-sm font-medium flex items-center gap-2">
+                  Product Name
+                  <span className="text-red-400">*</span>
+                </Label>
+                <Input
+                  id="product-name"
+                  type="text"
+                  value={productName}
+                  onChange={(e) => setProductName(e.target.value)}
+                  placeholder="e.g., ProFit Protein Powder"
+                  maxLength={100}
+                  className="bg-white/10 border-white/20 text-white placeholder:text-white/50"
+                  required
+                />
+                <p className="text-xs text-white/50">
+                  {productName.length} / 100 characters
+                </p>
+              </div>
+
+              {/* 3. Product Features */}
+              <div className="space-y-2">
+                <Label htmlFor="product-features" className="text-white text-sm font-medium flex items-center gap-2">
+                  Key Features
+                  <span className="text-red-400">*</span>
+                </Label>
+                <Textarea
+                  id="product-features"
+                  value={productFeatures}
+                  onChange={(e) => setProductFeatures(e.target.value)}
+                  placeholder="e.g., 30g protein per serving, chocolate flavor, keto-friendly, zero sugar"
+                  rows={3}
+                  maxLength={500}
+                  className="bg-white/10 border-white/20 text-white placeholder:text-white/50 resize-none"
+                  required
+                />
+                <div className="flex justify-between items-center">
+                  <p className="text-xs text-white/50">
+                    Highlight what makes your product special
                   </p>
                   <p className="text-xs text-white/50">
-                    {prompt.length} / 1000
+                    {productFeatures.length} / 500
                   </p>
                 </div>
-                {prompt.length < 10 && prompt.length > 0 && (
+                {productFeatures.length > 0 && productFeatures.length < 10 && (
                   <p className="text-xs text-red-400">
                     Minimum 10 characters required
                   </p>
                 )}
               </div>
 
-              {/* Product Image URL (Optional) */}
+              {/* 4. Customer Persona (ICP) */}
               <div className="space-y-2">
-                <Label htmlFor="referenceUrl" className="text-white text-sm font-medium">
-                  Product Image (Optional)
+                <Label htmlFor="customer-persona" className="text-white text-sm font-medium flex items-center gap-2">
+                  Who's Your Customer?
+                  <span className="text-red-400">*</span>
                 </Label>
-                <Input
-                  id="referenceUrl"
-                  type="url"
-                  value={referenceImageUrl}
-                  onChange={(e) => setReferenceImageUrl(e.target.value)}
-                  placeholder="https://yourshopifyproduct.com/photo.jpg"
-                  className="bg-white/10 border-white/20 text-white placeholder:text-white/50"
-                />
+                <Select value={customerPersona} onValueChange={setCustomerPersona}>
+                  <SelectTrigger className="bg-white/10 border-white/20 text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1a1a1a] border-white/20">
+                    {ICP_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value} className="text-white hover:bg-white/10">
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <p className="text-xs text-white/50">
-                  Add a link to your product photo — AI will use it to match your brand
+                  {ICP_OPTIONS.find(opt => opt.value === customerPersona)?.description}
                 </p>
               </div>
 
-              {/* Generate Button */}
+              {/* 5. Video Setting (Scene) */}
               <div className="space-y-2">
+                <Label htmlFor="video-setting" className="text-white text-sm font-medium flex items-center gap-2">
+                  Where's the Ad Filmed?
+                  <span className="text-red-400">*</span>
+                </Label>
+                <Select value={videoSetting} onValueChange={setVideoSetting}>
+                  <SelectTrigger className="bg-white/10 border-white/20 text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1a1a1a] border-white/20">
+                    {SCENE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value} className="text-white hover:bg-white/10">
+                        <span className="flex items-center gap-2">
+                          <span>{option.emoji}</span>
+                          <span>{option.label}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-white/50">
+                  {SCENE_OPTIONS.find(opt => opt.value === videoSetting)?.description}
+                </p>
+              </div>
+
+              {/* 6. Generation Mode */}
+              <div className="space-y-3">
+                <Label className="text-white text-sm font-medium flex items-center gap-2">
+                  Quality Mode
+                  <button
+                    type="button"
+                    className="text-white/50 hover:text-white/70 transition-colors"
+                    title="Choose between quality, speed, or cost"
+                  >
+                    <Info className="h-4 w-4" />
+                  </button>
+                </Label>
+                <div className="space-y-2">
+                  {MODE_OPTIONS.map((mode) => (
+                    <button
+                      key={mode.value}
+                      type="button"
+                      onClick={() => setGenerationMode(mode.value)}
+                      className={`
+                        w-full text-left p-4 rounded-lg border transition-all
+                        ${generationMode === mode.value
+                          ? 'bg-blue-600/20 border-blue-500 shadow-lg'
+                          : 'bg-white/5 border-white/10 hover:bg-white/10'
+                        }
+                      `}
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-white font-medium">{mode.label}</span>
+                            <span className={`
+                              text-xs px-2 py-0.5 rounded-full font-medium
+                              ${mode.badge === 'RECOMMENDED' ? 'bg-green-500/20 text-green-400' : ''}
+                              ${mode.badge === 'FASTER' ? 'bg-blue-500/20 text-blue-400' : ''}
+                              ${mode.badge === 'CHEAPER' ? 'bg-purple-500/20 text-purple-400' : ''}
+                            `}>
+                              {mode.badge}
+                            </span>
+                          </div>
+                          <p className="text-sm text-white/60">{mode.description}</p>
+                        </div>
+                        <span className="text-xs text-white/50 ml-4">{mode.estimatedTime}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Generate Button */}
+              <div className="space-y-2 pt-4">
                 <Button
                   type="submit"
                   className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-medium"
-                  disabled={generateMutation.isPending || prompt.length < 10}
+                  disabled={generateMutation.isPending || !productName.trim() || !productFeatures.trim() || productFeatures.length < 10}
                 >
                   {generateMutation.isPending ? (
                     <>
                       <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                      Creating Your Ad...
+                      Creating Your UGC Ad...
                     </>
                   ) : (
                     <>
-                      <Sparkles className="h-5 w-5 mr-2" />
-                      Generate Ad {type === 'image' ? 'Image' : 'Video'}
+                      <VideoIcon className="h-5 w-5 mr-2" />
+                      Generate UGC Ad Video
                     </>
                   )}
                 </Button>
                 <p className="text-xs text-white/60 text-center">
-                  Your ad will appear below once ready (usually within 1–2 minutes)
+                  Your ad will appear in the gallery below once ready
                 </p>
               </div>
             </form>
