@@ -253,94 +253,128 @@ export const kieService = {
       });
     }
 
+    // ✅ DEBUG: Log raw response for Veo3 to diagnose status/URL issues
+    if (provider.includes('veo3')) {
+      console.log('[KIE Veo3 Debug] Raw response:', JSON.stringify(rawData, null, 2));
+      console.log('[KIE Veo3 Debug] Fields:', {
+        successFlag,
+        state,
+        hasResponse: !!rawData.response,
+        hasResultUrls: !!rawData.response?.resultUrls,
+        resultUrlsCount: rawData.response?.resultUrls?.length || 0,
+        hasResultJson: !!rawData.resultJson,
+        resultJsonType: typeof rawData.resultJson,
+      });
+    }
+
     // ✅ PHASE 4.7.1: Map status from multiple possible fields (Veo3 vs Images)
+    // successFlag values observed:
+    //   0 = processing (initial state)
+    //   1 = success/ready
+    //   2 = failed
+    //   3 = processing/transcoding (Veo3 specific - video being generated)
+    //  -1 = failed/error
     let status: 'processing' | 'ready' | 'failed';
-    if (successFlag === 0 || state === 'PROCESSING') {
-      status = 'processing';
+    if (successFlag === 0 || successFlag === 3 || state === 'PROCESSING') {
+      status = 'processing'; // ✅ FIX: successFlag=3 is also a processing state
     } else if (successFlag === 1 || state === 'SUCCESS') {
       status = 'ready';
     } else if (state === 'FAILED' || successFlag === -1 || successFlag === 2) {
       status = 'failed';
     } else {
-      status = 'processing'; // Default to processing for unknown states
+      // Unknown state - log warning and default to processing
+      console.warn(`[KIE Service] ⚠️ Unknown status: successFlag=${successFlag}, state=${state}`);
+      status = 'processing';
     }
 
-    console.log(`[KIE Status Check] ${provider} - successFlag=${successFlag}, state=${state}, status=${status}`);
+    console.log(`[KIE Status Check] ${provider} - successFlag=${successFlag}, state=${state}, mapped status=${status}`);
 
     // Extract result URLs with robust fallback logic
+    // ✅ FIX: Check for URLs regardless of status - sometimes KIE returns URLs before changing successFlag
     let resultUrls: string[] | undefined;
-    if (status === 'ready') {
-      // ✅ PHASE 4.7.1: Check ALL possible KIE response paths (based on n8n workflow analysis)
-      // Priority order verified from UGC Ads Veo & Sora.json n8n template:
-      //  - Veo3 videos: data.response.resultUrls (lines 411, 1008)
-      //  - Sora videos: JSON.parse(data.resultJson).resultUrls (line 681)
-      //  - NanoBanana images: JSON.parse(data.resultJson).resultUrls (line 229)
-      let urls: any[] =
-        rawData.response?.resultUrls ||            // ✅ Veo3 PRIMARY path (videos)
-        rawData.resultJson?.resultUrls ||          // Sora/NanoBanana path (may be JSON string)
-        rawData.metadata?.response?.resultUrls ||  // Nested metadata path
-        rawData.response?.result_urls ||           // Snake_case variant
-        rawData.metadata?.resultUrls ||            // Direct metadata path
-        rawData.resultUrls ||                      // Direct path
-        (rawData.resultJson?.resultUrl ? [rawData.resultJson.resultUrl] : []) || // Single URL (Sora)
-        (rawData.response?.resultUrl ? [rawData.response.resultUrl] : []) ||  // Single URL (Veo3)
-        (rawData.response?.resultImageUrl ? [rawData.response.resultImageUrl] : []) || // Flux kontext
-        rawData.outputs?.map((o: any) => o.url).filter(Boolean) ||
-        rawData.outputFiles?.filter(Boolean) ||
-        rawData.result?.map((r: any) => r.url).filter(Boolean) ||
-        rawData.records?.map((r: any) => r.fileUrl).filter(Boolean) ||
-        rawData.resources?.map((r: any) => r.url).filter(Boolean) ||
-        (rawData.data?.resources?.[0]?.url ? [rawData.data.resources[0].url] : []) ||
-        (rawData.resultUrl ? [rawData.resultUrl] : []) ||
-        (rawData.url ? [rawData.url] : []) ||
-        [];
 
-      // ✅ Handle case where resultJson is a JSON string (Sora/NanoBanana)
-      if ((!urls || urls.length === 0) && typeof rawData.resultJson === 'string') {
-        try {
-          const parsed = JSON.parse(rawData.resultJson);
-          urls = parsed.resultUrls || [];
-        } catch (e) {
-          // resultJson not a valid JSON string, continue with fallbacks
-        }
+    // Always try to extract URLs (not just when status=ready)
+    // This handles cases where URLs appear before successFlag changes to 1
+    // ✅ PHASE 4.7.1: Check ALL possible KIE response paths (based on n8n workflow analysis)
+    // Priority order verified from UGC Ads Veo & Sora.json n8n template:
+    //  - Veo3 videos: data.response.resultUrls (lines 411, 1008)
+    //  - Sora videos: JSON.parse(data.resultJson).resultUrls (line 681)
+    //  - NanoBanana images: JSON.parse(data.resultJson).resultUrls (line 229)
+    let urls: any[] =
+      rawData.response?.resultUrls ||            // ✅ Veo3 PRIMARY path (videos)
+      rawData.resultJson?.resultUrls ||          // Sora/NanoBanana path (may be JSON string)
+      rawData.metadata?.response?.resultUrls ||  // Nested metadata path
+      rawData.response?.result_urls ||           // Snake_case variant
+      rawData.metadata?.resultUrls ||            // Direct metadata path
+      rawData.resultUrls ||                      // Direct path
+      (rawData.resultJson?.resultUrl ? [rawData.resultJson.resultUrl] : []) || // Single URL (Sora)
+      (rawData.response?.resultUrl ? [rawData.response.resultUrl] : []) ||  // Single URL (Veo3)
+      (rawData.response?.resultImageUrl ? [rawData.response.resultImageUrl] : []) || // Flux kontext
+      (rawData.response?.videoUrl ? [rawData.response.videoUrl] : []) || // Veo3 videoUrl
+      (rawData.videoUrl ? [rawData.videoUrl] : []) || // Direct videoUrl
+      rawData.outputs?.map((o: any) => o.url).filter(Boolean) ||
+      rawData.outputFiles?.filter(Boolean) ||
+      rawData.result?.map((r: any) => r.url).filter(Boolean) ||
+      rawData.records?.map((r: any) => r.fileUrl).filter(Boolean) ||
+      rawData.resources?.map((r: any) => r.url).filter(Boolean) ||
+      (rawData.data?.resources?.[0]?.url ? [rawData.data.resources[0].url] : []) ||
+      (rawData.resultUrl ? [rawData.resultUrl] : []) ||
+      (rawData.url ? [rawData.url] : []) ||
+      [];
+
+    // ✅ Handle case where resultJson is a JSON string (Sora/NanoBanana)
+    if ((!urls || urls.length === 0) && typeof rawData.resultJson === 'string') {
+      try {
+        const parsed = JSON.parse(rawData.resultJson);
+        urls = parsed.resultUrls || parsed.resultUrl ? [parsed.resultUrl] : [];
+      } catch (e) {
+        // resultJson not a valid JSON string, continue with fallbacks
       }
+    }
 
-      resultUrls = urls.filter(Boolean); // Remove null/undefined
+    resultUrls = urls.filter(Boolean); // Remove null/undefined
 
-      // ✅ PHASE 4.7.1: Enhanced logging for Veo3 debugging
-      if (provider.includes('veo3')) {
-        console.log('[KIE Veo3 ✅] Status check:', {
-          taskId,
-          state,
-          successFlag,
-          status,
-          urlCount: resultUrls.length,
-          firstUrl: resultUrls[0] ? resultUrls[0].substring(0, 60) + '...' : 'none',
-        });
-      } else if (provider.includes('flux-kontext')) {
-        console.log('[KIE Flux-Kontext ✅] URL extraction result:', {
-          taskId,
-          state,
-          successFlag,
-          status,
-          urlCount: resultUrls.length,
-          firstUrl: resultUrls[0] ? resultUrls[0].substring(0, 80) + '...' : 'none',
-        });
-      } else {
-        console.log('[KIE FIX ✅] Extracted resultUrls:', resultUrls);
-      }
+    // ✅ FIX: If we found URLs, mark as ready regardless of successFlag
+    // This handles edge cases where KIE returns URLs before updating successFlag
+    if (resultUrls && resultUrls.length > 0 && status === 'processing') {
+      console.log(`[KIE Service] ⚠️ Found URLs but status was processing - marking as ready`);
+      status = 'ready';
+    }
 
-      if (!resultUrls || resultUrls.length === 0) {
-        console.warn(`[KIE Service] ⚠️ No result URLs found in response for ${provider}!`);
-        console.log('[KIE Service] All checked paths:', {
-          'response.resultUrls': rawData.response?.resultUrls,
-          'resultJson.resultUrls': rawData.resultJson?.resultUrls,
-          'resultJson (type)': typeof rawData.resultJson,
-          'response.resultImageUrl': rawData.response?.resultImageUrl,
-          'metadata.response.resultUrls': rawData.metadata?.response?.resultUrls,
-        });
-        console.log('[KIE Service] Full raw response data:', JSON.stringify(rawData, null, 2));
-      }
+    // ✅ PHASE 4.7.1: Enhanced logging for Veo3 debugging
+    if (provider.includes('veo3')) {
+      console.log('[KIE Veo3 ✅] Status check:', {
+        taskId,
+        state,
+        successFlag,
+        status,
+        urlCount: resultUrls?.length || 0,
+        firstUrl: resultUrls?.[0] ? resultUrls[0].substring(0, 60) + '...' : 'none',
+      });
+    } else if (provider.includes('flux-kontext')) {
+      console.log('[KIE Flux-Kontext ✅] URL extraction result:', {
+        taskId,
+        state,
+        successFlag,
+        status,
+        urlCount: resultUrls?.length || 0,
+        firstUrl: resultUrls?.[0] ? resultUrls[0].substring(0, 80) + '...' : 'none',
+      });
+    } else {
+      console.log('[KIE FIX ✅] Extracted resultUrls:', resultUrls);
+    }
+
+    if (!resultUrls || resultUrls.length === 0) {
+      console.warn(`[KIE Service] ⚠️ No result URLs found in response for ${provider}!`);
+      console.log('[KIE Service] All checked paths:', {
+        'response.resultUrls': rawData.response?.resultUrls,
+        'resultJson.resultUrls': rawData.resultJson?.resultUrls,
+        'resultJson (type)': typeof rawData.resultJson,
+        'response.resultImageUrl': rawData.response?.resultImageUrl,
+        'response.videoUrl': rawData.response?.videoUrl,
+        'metadata.response.resultUrls': rawData.metadata?.response?.resultUrls,
+      });
+      console.log('[KIE Service] Full raw response data:', JSON.stringify(rawData, null, 2));
     }
 
     return {
