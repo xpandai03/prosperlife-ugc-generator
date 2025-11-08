@@ -95,8 +95,11 @@ export const apiLogs = pgTable("api_logs", {
 // Social Posts table - tracks all social media posts via Late.dev API
 export const socialPosts = pgTable("social_posts", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  projectId: text("project_id").notNull().references(() => projects.id),
-  taskId: text("task_id").notNull().references(() => tasks.id),
+  // Klap video references (nullable for UGC posts)
+  projectId: text("project_id").references(() => projects.id),
+  taskId: text("task_id").references(() => tasks.id),
+  // UGC video reference (nullable for Klap posts) - Phase 4.7
+  mediaAssetId: text("media_asset_id").references(() => mediaAssets.id),
   userId: uuid("user_id").notNull().references(() => users.id),
   platform: text("platform").notNull(), // instagram, tiktok, youtube, etc.
   latePostId: text("late_post_id"), // Late.dev post ID

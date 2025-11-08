@@ -979,7 +979,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const { projectId, videoUrl, platform, caption, scheduledFor } = validation.data;
+      const { projectId, videoUrl, mediaAssetId, platform, caption, scheduledFor } = validation.data;
 
       // Check usage limit (Phase 6: Free tier limits)
       const canCreatePost = await checkPostLimit(req.userId!);
@@ -1106,8 +1106,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         try {
           const { openaiService } = await import("./services/openai.js");
+          // Use project name for Klap videos, generic name for UGC videos
+          const contentName = projectForPost?.name || 'UGC video ad';
           const result = await openaiService.generateCaption({
-            projectName: project.name,
+            projectName: contentName,
             userSystemPrompt: user.captionSystemPrompt || undefined,
           });
 
@@ -1144,12 +1146,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Create initial social post record (Phase 3: Include scheduling fields)
-      // For UGC videos, projectId and taskId will be null
+      // For UGC videos, projectId and taskId will be null, mediaAssetId will be set
       const initialStatus = scheduledFor ? 'scheduled' : 'posting';
 
       const socialPost = await storage.createSocialPost({
         projectId: projectId || null,
         taskId: taskForPost?.taskId || null,
+        mediaAssetId: mediaAssetId || null, // Phase 4.7: UGC video reference
         userId: req.userId!, // ✅ FIX: Add required userId from authenticated session
         platform,
         caption: finalCaption,

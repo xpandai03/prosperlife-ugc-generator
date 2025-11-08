@@ -243,6 +243,7 @@ export function UGCAdPreviewModal({ asset, onClose }: UGCAdPreviewModalProps) {
       console.log('[UGC Modal] Posting asset to Instagram:', asset.id);
       const response = await apiRequest('POST', '/api/social/post', {
         videoUrl: mediaUrl,
+        mediaAssetId: asset.id, // ✅ Send UGC video asset ID for database reference
         platform: 'instagram',
         caption: '',
       });
@@ -316,7 +317,9 @@ export function UGCAdPreviewModal({ asset, onClose }: UGCAdPreviewModalProps) {
                   src={mediaUrl}
                   controls
                   className="max-h-[500px] rounded-lg shadow-xl"
-                  preload="metadata"
+                  preload="auto"
+                  playsInline
+                  crossOrigin="anonymous"
                   onError={() => handleMediaError('video')}
                 >
                   Your browser does not support the video tag.

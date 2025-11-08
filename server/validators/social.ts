@@ -11,7 +11,8 @@ import { z } from "zod";
  *
  * Validates:
  * - projectId: Must be a non-empty string (for Klap videos)
- * - videoUrl: Direct video URL (for UGC videos from AI Studio) - EITHER projectId OR videoUrl required
+ * - videoUrl: Direct video URL (for UGC videos from AI Studio)
+ * - mediaAssetId: Media asset ID (for UGC videos) - Phase 4.7
  * - platform: Currently only 'instagram' supported
  * - caption: Optional, max 2200 characters (Instagram limit)
  * - scheduledFor: Optional ISO 8601 UTC timestamp for scheduled posts (Phase 3)
@@ -25,6 +26,11 @@ export const postToSocialSchema = z.object({
   videoUrl: z
     .string()
     .url("Video URL must be a valid HTTPS URL")
+    .optional(),
+
+  mediaAssetId: z
+    .string()
+    .min(1, "Media asset ID cannot be empty")
     .optional(),
 
   platform: z

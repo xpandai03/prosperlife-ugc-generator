@@ -157,7 +157,9 @@ export function MediaPreviewCard({ asset, onClick }: MediaPreviewCardProps) {
             src={mediaUrl}
             controls
             className="w-full h-full object-cover"
-            preload="metadata"
+            preload="auto"
+            playsInline
+            crossOrigin="anonymous"
           >
             Your browser does not support the video tag.
           </video>
