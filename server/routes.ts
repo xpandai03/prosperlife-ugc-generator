@@ -979,7 +979,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const { projectId, platform, caption, scheduledFor } = validation.data;
+      const { projectId, videoUrl, platform, caption, scheduledFor } = validation.data;
 
       // Check usage limit (Phase 6: Free tier limits)
       const canCreatePost = await checkPostLimit(req.userId!);
@@ -992,41 +992,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      console.log(`[Social Post] Request to post project ${projectId} to ${platform}`);
+      // Determine video source and extract URL
+      let finalVideoUrl: string;
+      let projectForPost: any = null;
+      let taskForPost: any = null;
 
-      // Get project to verify it exists and get associated task
-      const project = await storage.getProject(projectId);
-      if (!project) {
-        console.log(`[Social Post] Project not found: ${projectId}`);
-        return res.status(404).json({ error: "Project not found" });
-      }
+      if (projectId) {
+        // **Klap Video Flow** - Use projectExport.srcUrl
+        console.log(`[Social Post] Klap video - posting project ${projectId} to ${platform}`);
 
-      // Verify ownership - ensure the project belongs to the authenticated user
-      const task = await storage.getTask(project.taskId);
-      if (!task || task.userId !== req.userId) {
-        console.log(`[Social Post] Unauthorized access to project ${projectId}`);
-        return res.status(404).json({ error: "Project not found" });
-      }
+        // Get project to verify it exists and get associated task
+        const project = await storage.getProject(projectId);
+        if (!project) {
+          console.log(`[Social Post] Project not found: ${projectId}`);
+          return res.status(404).json({ error: "Project not found" });
+        }
 
-      // Get the latest successful export for this project
-      const exports = await storage.getExportsByTask(project.taskId);
-      const projectExport = exports.find(
-        (exp) => exp.projectId === projectId && exp.status === "ready"
-      );
+        // Verify ownership - ensure the project belongs to the authenticated user
+        const task = await storage.getTask(project.taskId);
+        if (!task || task.userId !== req.userId) {
+          console.log(`[Social Post] Unauthorized access to project ${projectId}`);
+          return res.status(404).json({ error: "Project not found" });
+        }
 
-      if (!projectExport || !projectExport.srcUrl) {
-        console.log(`[Social Post] No ready export found for project ${projectId}`);
+        // Get the latest successful export for this project
+        const exports = await storage.getExportsByTask(project.taskId);
+        const projectExport = exports.find(
+          (exp) => exp.projectId === projectId && exp.status === "ready"
+        );
+
+        if (!projectExport || !projectExport.srcUrl) {
+          console.log(`[Social Post] No ready export found for project ${projectId}`);
+          return res.status(400).json({
+            error: "No ready export found for this project",
+            details: "Please export the clip before posting to social media",
+          });
+        }
+
+        finalVideoUrl = projectExport.srcUrl;
+        projectForPost = project;
+        taskForPost = task;
+
+        console.log(`[Social Post] Using Klap export URL: ${finalVideoUrl.substring(0, 50)}...`);
+      } else if (videoUrl) {
+        // **UGC Video Flow** - Use direct videoUrl from media_assets
+        console.log(`[Social Post] UGC video - posting direct URL to ${platform}`);
+        finalVideoUrl = videoUrl;
+
+        console.log(`[Social Post] Using UGC video URL: ${finalVideoUrl.substring(0, 50)}...`);
+      } else {
+        // This should never happen due to schema validation, but just in case
+        console.error('[Social Post] Neither projectId nor videoUrl provided');
         return res.status(400).json({
-          error: "No ready export found for this project",
-          details: "Please export the clip before posting to social media",
+          error: "Invalid request",
+          details: "Either projectId or videoUrl must be provided",
         });
       }
 
-      console.log(`[Social Post] Using export URL: ${projectExport.srcUrl.substring(0, 50)}...`);
-
-      // Phase 2: Validate video URL format
-      if (!projectExport.srcUrl.startsWith('https://')) {
-        console.error(`[Social Post] Invalid video URL format: ${projectExport.srcUrl}`);
+      // Phase 2: Validate video URL format (applies to both Klap and UGC)
+      if (!finalVideoUrl.startsWith('https://')) {
+        console.error(`[Social Post] Invalid video URL format: ${finalVideoUrl}`);
         return res.status(400).json({
           error: 'Invalid video URL',
           details: 'Video URL must be HTTPS. The export may have failed or URL is malformed.'
@@ -1034,7 +1059,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       console.log('[Validation] ✓ Video URL format valid (HTTPS)');
-      console.log('[Validation] Full URL:', projectExport.srcUrl);
+      console.log('[Validation] Full URL:', finalVideoUrl);
 
       // Get user's Late.dev profile information
       const user = await storage.getUser(req.userId!);
@@ -1119,11 +1144,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Create initial social post record (Phase 3: Include scheduling fields)
+      // For UGC videos, projectId and taskId will be null
       const initialStatus = scheduledFor ? 'scheduled' : 'posting';
 
       const socialPost = await storage.createSocialPost({
-        projectId,
-        taskId: project.taskId,
+        projectId: projectId || null,
+        taskId: taskForPost?.taskId || null,
         userId: req.userId!, // ✅ FIX: Add required userId from authenticated session
         platform,
         caption: finalCaption,
@@ -1146,10 +1172,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Scheduled post: Create in Late.dev with scheduledFor timestamp
         console.log(`[Social Post] Scheduling post for ${scheduledFor} (UTC)`);
 
+        // 🔍 DEBUG: Log Late API request payload
+        console.log('[Late Debug] Request payload:', {
+          videoUrl: finalVideoUrl.substring(0, 80) + '...',
+          caption: finalCaption.substring(0, 50) + '...',
+          contentType: 'reel',
+          scheduledFor,
+          profileId: user.lateProfileId,
+          accountId,
+        });
+
         try {
           const lateResponse = await lateService.postToInstagram(
             {
-              videoUrl: projectExport.srcUrl,
+              videoUrl: finalVideoUrl,
               caption: finalCaption,
               contentType: 'reel',
               scheduledFor, // Pass ISO 8601 UTC timestamp to Late.dev
@@ -1188,10 +1224,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       } else {
         // Immediate post: Post to Instagram right away (existing behavior)
+        // 🔍 DEBUG: Log Late API request payload
+        console.log('[Late Debug] Request payload:', {
+          videoUrl: finalVideoUrl.substring(0, 80) + '...',
+          caption: finalCaption.substring(0, 50) + '...',
+          contentType: 'reel',
+          profileId: user.lateProfileId,
+          accountId,
+        });
+
         try {
           const lateResponse = await lateService.postToInstagram(
             {
-              videoUrl: projectExport.srcUrl,
+              videoUrl: finalVideoUrl,
               caption: finalCaption,
               contentType: 'reel',
             },

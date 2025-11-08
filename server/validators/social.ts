@@ -10,15 +10,22 @@ import { z } from "zod";
  * Schema for posting a clip to social media
  *
  * Validates:
- * - projectId: Must be a non-empty string
+ * - projectId: Must be a non-empty string (for Klap videos)
+ * - videoUrl: Direct video URL (for UGC videos from AI Studio) - EITHER projectId OR videoUrl required
  * - platform: Currently only 'instagram' supported
  * - caption: Optional, max 2200 characters (Instagram limit)
  * - scheduledFor: Optional ISO 8601 UTC timestamp for scheduled posts (Phase 3)
  */
 export const postToSocialSchema = z.object({
   projectId: z
-    .string({ required_error: "Project ID is required" })
-    .min(1, "Project ID cannot be empty"),
+    .string()
+    .min(1, "Project ID cannot be empty")
+    .optional(),
+
+  videoUrl: z
+    .string()
+    .url("Video URL must be a valid HTTPS URL")
+    .optional(),
 
   platform: z
     .enum(["instagram"], {
@@ -38,6 +45,9 @@ export const postToSocialSchema = z.object({
     .string()
     .datetime({ message: "scheduledFor must be a valid ISO 8601 UTC timestamp" })
     .optional(),
+}).refine((data) => data.projectId || data.videoUrl, {
+  message: "Either projectId (for Klap videos) or videoUrl (for UGC videos) must be provided",
+  path: ["projectId"],
 });
 
 /**
