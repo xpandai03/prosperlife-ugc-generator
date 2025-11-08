@@ -82,21 +82,42 @@ export function UGCAdPreviewModal({ asset, onClose }: UGCAdPreviewModalProps) {
     if (!asset) return '';
 
     try {
+      // Try all possible field name variations (Drizzle + API variations)
       const url = (
-        asset?.resultUrl ||
-        (asset as any)?.result_url ||
-        asset?.metadata?.response?.resultUrls?.[0] || // ✅ Primary KIE path
-        asset?.resultUrls?.[0] ||
-        asset?.metadata?.resultUrls?.[0] ||
-        asset?.metadata?.outputs?.[0]?.url ||
-        asset?.metadata?.resultUrl ||
-        asset?.metadata?.resources?.[0]?.url ||
-        asset?.apiResponse?.data?.resultUrl ||
+        asset?.resultUrl ||                                  // Drizzle camelCase
+        (asset as any)?.result_url ||                        // Drizzle snake_case fallback
+        asset?.resultUrls?.[0] ||                            // Array format (camelCase)
+        (asset as any)?.result_urls?.[0] ||                  // Array format (snake_case)
+        asset?.metadata?.response?.resultUrls?.[0] ||        // KIE nested path
+        asset?.metadata?.resultJson?.resultUrls?.[0] ||      // Sora/NanoBanana path
+        asset?.metadata?.resultUrls?.[0] ||                  // Metadata array
+        asset?.metadata?.resultUrl ||                        // Metadata single
+        asset?.metadata?.result_url ||                       // Metadata snake_case
+        asset?.metadata?.outputs?.[0]?.url ||                // Outputs array
+        asset?.metadata?.resources?.[0]?.url ||              // Resources array
+        asset?.apiResponse?.data?.resultUrl ||               // API response camelCase
+        (asset?.apiResponse as any)?.data?.result_url ||     // API response snake_case
         ''
       );
 
-      console.log('[UGC Modal] Extracted mediaUrl:', url, 'from asset:', asset.id);
-      return url;
+      // Clean URL (remove null/undefined/empty)
+      const cleanUrl = url && typeof url === 'string' && url.trim() !== '' ? url : '';
+
+      // 🔍 DEBUG: Log exact asset structure for videos
+      if (asset.type === 'video' && asset.status === 'ready') {
+        console.log('[UGC Modal] Video asset:', {
+          id: asset.id,
+          status: asset.status,
+          type: asset.type,
+          resultUrl: asset.resultUrl,
+          result_url: (asset as any).result_url,
+          resultUrls: asset.resultUrls,
+          extractedUrl: cleanUrl,
+          allKeys: Object.keys(asset).slice(0, 15), // First 15 keys for debugging
+        });
+      }
+
+      return cleanUrl;
     } catch (error) {
       console.error('[UGC Modal] Error extracting media URL:', error);
       setError(true);

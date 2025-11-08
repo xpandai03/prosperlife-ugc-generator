@@ -49,21 +49,44 @@ export function MediaPreviewCard({ asset, onClick }: MediaPreviewCardProps) {
   const [showPostModal, setShowPostModal] = useState(false);
   const [imageError, setImageError] = useState(false);
 
-  // Robust URL extraction with fallbacks
+  // Robust URL extraction with ALL possible paths (Drizzle + API variations)
   const getMediaUrl = (): string | null => {
-    return (
-      asset.resultUrl ||
-      (asset as any).result_url ||
-      asset.resultUrls?.[0] ||
-      asset.metadata?.resultUrls?.[0] ||
-      asset.metadata?.outputs?.[0]?.url ||
-      asset.metadata?.resultUrl ||
-      asset.apiResponse?.data?.resultUrl ||
+    // Try all possible field name variations
+    const url = (
+      asset.resultUrl ||                                  // Drizzle camelCase
+      (asset as any).result_url ||                        // Drizzle snake_case fallback
+      asset.resultUrls?.[0] ||                            // Array format (camelCase)
+      (asset as any).result_urls?.[0] ||                  // Array format (snake_case)
+      asset.metadata?.response?.resultUrls?.[0] ||        // KIE nested path
+      asset.metadata?.resultJson?.resultUrls?.[0] ||      // Sora/NanoBanana path
+      asset.metadata?.resultUrls?.[0] ||                  // Metadata array
+      asset.metadata?.resultUrl ||                        // Metadata single
+      asset.metadata?.result_url ||                       // Metadata snake_case
+      asset.metadata?.outputs?.[0]?.url ||                // Outputs array
+      asset.apiResponse?.data?.resultUrl ||               // API response camelCase
+      (asset.apiResponse as any)?.data?.result_url ||     // API response snake_case
       null
     );
+
+    // Clean URL (remove null/undefined/empty)
+    return url && typeof url === 'string' && url.trim() !== '' ? url : null;
   };
 
   const mediaUrl = getMediaUrl();
+
+  // 🔍 DEBUG: Log exact asset structure for videos
+  if (asset.type === 'video' && asset.status === 'ready') {
+    console.log('[MediaPreviewCard] Video asset:', {
+      id: asset.id,
+      status: asset.status,
+      type: asset.type,
+      resultUrl: asset.resultUrl,
+      result_url: (asset as any).result_url,
+      resultUrls: asset.resultUrls,
+      extractedUrl: mediaUrl,
+      allKeys: Object.keys(asset).slice(0, 15), // First 15 keys for debugging
+    });
+  }
 
   // Format provider name for display
   const formatProviderName = (provider: string) => {
@@ -138,6 +161,17 @@ export function MediaPreviewCard({ asset, onClick }: MediaPreviewCardProps) {
           >
             Your browser does not support the video tag.
           </video>
+        )}
+
+        {/* Ready Video BUT No URL (Debug Case) */}
+        {asset.status === 'ready' && asset.type === 'video' && !mediaUrl && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-yellow-500/10">
+            <VideoIcon className="h-8 w-8 text-yellow-400 mb-3" />
+            <p className="text-sm text-yellow-300 font-medium mb-1">Video Ready - URL Missing</p>
+            <p className="text-xs text-yellow-300/80 px-4 text-center">
+              Generation complete but preview URL not found. Check console logs.
+            </p>
+          </div>
         )}
 
         {/* Error State */}

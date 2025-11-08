@@ -88,9 +88,20 @@ export default function AIStudioPage() {
     refetchInterval: (data) => {
       // Poll every 10s if there are processing assets, otherwise don't poll
       const hasProcessing = data?.assets?.some(a => a.status === 'processing');
+
+      // 🔍 DEBUG: Log polling decision
+      if (hasProcessing) {
+        console.log('[AIStudio] Polling active - processing assets found:',
+          data?.assets?.filter(a => a.status === 'processing').map(a => ({ id: a.id, type: a.type }))
+        );
+      }
+
       return hasProcessing ? 10000 : false;
     },
     refetchIntervalInBackground: false, // Don't poll when tab is inactive
+    // 🆕 Force at least ONE refetch after processing completes
+    refetchOnMount: true,
+    staleTime: 5000, // Override global Infinity to allow refetch (5 seconds)
   });
 
   // Generate media mutation
