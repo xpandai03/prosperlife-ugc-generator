@@ -72,6 +72,7 @@ export function UGCAdPreviewModal({ asset, onClose }: UGCAdPreviewModalProps) {
   const [scheduledDateTime, setScheduledDateTime] = useState('');
   const [showPostFlow, setShowPostFlow] = useState(false);
   const [error, setError] = useState(false);
+  const [isPosting, setIsPosting] = useState(false); // Loading state for Instagram posting
 
   // Context hooks
   const queryClient = useQueryClient();
@@ -219,12 +220,13 @@ export function UGCAdPreviewModal({ asset, onClose }: UGCAdPreviewModalProps) {
   };
 
   const handleClose = () => {
-    if (!postMutation.isPending && !useForVideoMutation.isPending) {
+    if (!postMutation.isPending && !useForVideoMutation.isPending && !isPosting) {
       setCaption('');
       setIsScheduled(false);
       setScheduledDateTime('');
       setShowPostFlow(false);
       setError(false);
+      setIsPosting(false);
       postMutation.reset();
       useForVideoMutation.reset();
       onClose();
@@ -237,7 +239,9 @@ export function UGCAdPreviewModal({ asset, onClose }: UGCAdPreviewModalProps) {
   };
 
   const handlePostToInstagram = async () => {
-    if (!mediaUrl || !asset) return;
+    if (!mediaUrl || !asset || isPosting) return;
+
+    setIsPosting(true);
 
     try {
       console.log('[UGC Modal] Posting asset to Instagram:', asset.id);
@@ -250,12 +254,19 @@ export function UGCAdPreviewModal({ asset, onClose }: UGCAdPreviewModalProps) {
 
       const data = await response.json();
 
+      // Invalidate gallery query to show updated post status
+      queryClient.invalidateQueries({ queryKey: ['/api/ai/media'] });
+
+      // Show success toast
       toast({
-        title: 'Posted successfully! 🎉',
-        description: 'Your ad was sent to Instagram via Late.dev.',
+        title: '✅ Your ad was successfully posted to Instagram!',
+        description: 'You can check it on your connected Instagram account.',
       });
 
-      handleClose();
+      // Close modal after brief delay to let user see the success message
+      setTimeout(() => {
+        handleClose();
+      }, 1500);
     } catch (err: any) {
       console.error('[UGC Modal] Failed to post:', err);
       toast({
@@ -263,6 +274,8 @@ export function UGCAdPreviewModal({ asset, onClose }: UGCAdPreviewModalProps) {
         description: err.message || 'Please try again',
         variant: 'destructive',
       });
+    } finally {
+      setIsPosting(false);
     }
   };
 
@@ -385,11 +398,20 @@ export function UGCAdPreviewModal({ asset, onClose }: UGCAdPreviewModalProps) {
                 {/* Post to Instagram */}
                 <Button
                   onClick={handlePostToInstagram}
-                  disabled={!mediaUrl}
+                  disabled={!mediaUrl || isPosting}
                   className="flex-1 bg-blue-600 hover:bg-blue-700"
                 >
-                  <Calendar className="h-4 w-4 mr-2" />
-                  Post to Instagram
+                  {isPosting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Posting...
+                    </>
+                  ) : (
+                    <>
+                      <Calendar className="h-4 w-4 mr-2" />
+                      Post to Instagram
+                    </>
+                  )}
                 </Button>
 
                 {/* Download */}
