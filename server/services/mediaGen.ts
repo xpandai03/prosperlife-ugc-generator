@@ -34,6 +34,7 @@ export interface MediaGenerationResult {
   type: MediaType;
   status: 'processing' | 'ready' | 'failed';
   resultUrl?: string;
+  resultUrls?: string[]; // ✅ PHASE 4.7.1: Array of result URLs for validation
   metadata?: any;
 }
 
@@ -133,9 +134,11 @@ export async function checkMediaStatus(
     type: provider.includes('veo3') ? 'video' : 'image',
     status: status.status,
     resultUrl: status.resultUrls?.[0],
+    resultUrls: status.resultUrls, // ✅ PHASE 4.7.1: Include all URLs array for validation
     metadata: {
       progress: status.progress,
       errorMessage: status.errorMessage,
+      checkedAt: new Date().toISOString(), // ✅ PHASE 4.7.1: Add timestamp for debugging
     },
   };
 }

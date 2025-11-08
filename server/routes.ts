@@ -1582,8 +1582,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       options?: any;
     }
   ): Promise<void> {
-    const maxAttempts = 40; // 40 * 30s = 20 minutes max polling
+    const maxAttempts = 60; // ✅ PHASE 4.7.1: 60 * 30s = 30 minutes (was 40 = 20 min)
     const pollInterval = 30000; // 30 seconds
+    const timeoutMs = 30 * 60 * 1000; // ✅ PHASE 4.7.1: 30 minutes timeout
+    const startTime = Date.now(); // ✅ PHASE 4.7.1: Track start time for timeout
     const maxRetries = 3;
     let retryCount = 0;
 
@@ -1648,10 +1650,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let pollAttempts = 0;
 
       while (pollAttempts < maxAttempts) {
+        // ✅ PHASE 4.7.1: Check timeout before polling
+        const elapsed = Date.now() - startTime;
+        if (elapsed > timeoutMs) {
+          const elapsedMinutes = Math.round(elapsed / 60000);
+          console.error(`[Media Generation] ❌ TIMEOUT after ${elapsedMinutes} minutes for ${assetId}`);
+
+          await storage.updateMediaAsset(assetId, {
+            status: 'error',
+            errorMessage: `Generation timed out after ${elapsedMinutes} minutes. The AI provider may be experiencing delays. Please try again or contact support.`,
+          });
+
+          return; // Exit function
+        }
+
         await new Promise(resolve => setTimeout(resolve, pollInterval));
         pollAttempts++;
 
-        console.log(`[Media Generation] Polling attempt ${pollAttempts}/${maxAttempts} for asset ${assetId}`);
+        const elapsedSeconds = Math.round(elapsed / 1000);
+
+        // ✅ PHASE 4.7.1: Enhanced logging for Veo3
+        if (params.provider.includes('veo3')) {
+          console.log(`[Veo3 Polling] Attempt ${pollAttempts}/${maxAttempts} (${elapsedSeconds}s elapsed) for ${assetId}`);
+        } else {
+          console.log(`[Media Generation] Polling attempt ${pollAttempts}/${maxAttempts} for asset ${assetId}`);
+        }
 
         try {
           const statusResult = await checkMediaStatus(
@@ -1659,12 +1682,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
             params.provider as any
           );
 
-          console.log('[Media Generation] Status check result:', {
-            assetId,
-            status: statusResult.status,
-            hasResult: !!statusResult.resultUrl,
-            resultUrl: statusResult.resultUrl,
-          });
+          // ✅ PHASE 4.7.1: Provider-specific logging
+          if (params.provider.includes('veo3')) {
+            console.log('[Veo3 Polling] Status:', {
+              assetId,
+              status: statusResult.status,
+              hasUrls: !!statusResult.resultUrl,
+              elapsed: `${elapsedSeconds}s`,
+            });
+          } else {
+            console.log('[Media Generation] Status check result:', {
+              assetId,
+              status: statusResult.status,
+              hasResult: !!statusResult.resultUrl,
+              resultUrl: statusResult.resultUrl,
+            });
+          }
 
           // Update asset with current status
           await storage.updateMediaAsset(assetId, {
@@ -1674,7 +1707,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             apiResponse: statusResult as any,
           });
 
-          // Check if complete
+          // ✅ PHASE 4.7.1: Handle completion (ready or failed)
           if (statusResult.status === 'ready') {
             // Extract URLs from KIE response (already extracted in kie.ts)
             const resultUrls = statusResult.resultUrls || [];
@@ -1698,15 +1731,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               metadata: statusResult.metadata,
             });
 
-            console.log(`[Media Generation] ✅ Generation completed for ${assetId}, URL: ${finalResultUrl}`);
+            console.log(`[Media Generation] ✅ Completed: ${assetId}`);
             return;
           }
 
           if (statusResult.status === 'failed' || statusResult.status === 'error') {
-            console.error('[Media Generation] Generation failed:', {
-              assetId,
-              error: statusResult.error,
-            });
+            console.error(`[Media Generation] ❌ Failed: ${assetId}`, statusResult.metadata?.errorMessage);
             return;
           }
 
@@ -1722,11 +1752,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Timeout - max polling attempts reached
-      console.error('[Media Generation] Timeout: Max polling attempts reached:', { assetId });
+      // ✅ PHASE 4.7.1: Max polling attempts reached (shouldn't happen with timeout check)
+      console.error(`[Media Generation] ❌ Max polling attempts reached for ${assetId}`);
       await storage.updateMediaAsset(assetId, {
         status: 'error',
-        errorMessage: 'Generation timeout: exceeded maximum polling time (20 minutes)',
+        errorMessage: 'Generation timed out after maximum polling attempts',
       });
 
     } catch (error: any) {

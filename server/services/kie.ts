@@ -237,31 +237,34 @@ export const kieService = {
       throw new Error(`KIE API Error: ${data.msg || 'Unknown error'}`);
     }
 
-    const successFlag = data.data.successFlag;
+    const rawData = data.data;
+    const successFlag = rawData.successFlag;
+    const state = rawData.state; // ✅ PHASE 4.7.1: Veo3 uses 'state' field instead of 'successFlag'
 
-    // Map successFlag to status
+    // ✅ PHASE 4.7.1: Map status from multiple possible fields (Veo3 vs Images)
     let status: 'processing' | 'ready' | 'failed';
-    if (successFlag === 0) {
+    if (successFlag === 0 || state === 'PROCESSING') {
       status = 'processing';
-    } else if (successFlag === 1) {
+    } else if (successFlag === 1 || state === 'SUCCESS') {
       status = 'ready';
-    } else {
+    } else if (state === 'FAILED' || successFlag === -1 || successFlag === 2) {
       status = 'failed';
+    } else {
+      status = 'processing'; // Default to processing for unknown states
     }
 
     // Extract result URLs with robust fallback logic
     let resultUrls: string[] | undefined;
     if (status === 'ready') {
-      // Try multiple possible response structures
-      const rawData = data.data;
-
-      // Check ALL possible KIE response paths in priority order
+      // ✅ PHASE 4.7.1: Check ALL possible KIE response paths including Veo3-specific paths
       let urls: any[] =
-        rawData.response?.resultUrls ||           // ✅ Primary KIE path (4o-image, veo3)
+        rawData.resultJson?.resultUrls ||          // ✅ Veo3 PRIMARY path
+        rawData.response?.resultUrls ||            // Images primary path (4o-image, flux)
         rawData.metadata?.response?.resultUrls ||  // Nested metadata path
         rawData.response?.result_urls ||           // Snake_case variant
         rawData.metadata?.resultUrls ||            // Direct metadata path
         rawData.resultUrls ||                      // Direct path
+        (rawData.resultJson?.resultUrl ? [rawData.resultJson.resultUrl] : []) || // Veo3 single URL
         (rawData.response?.resultUrl ? [rawData.response.resultUrl] : []) ||  // Single URL variant
         (rawData.response?.resultImageUrl ? [rawData.response.resultImageUrl] : []) || // Flux kontext
         rawData.outputs?.map((o: any) => o.url).filter(Boolean) ||
@@ -269,16 +272,29 @@ export const kieService = {
         rawData.result?.map((r: any) => r.url).filter(Boolean) ||
         rawData.records?.map((r: any) => r.fileUrl).filter(Boolean) ||
         rawData.resources?.map((r: any) => r.url).filter(Boolean) ||
+        (rawData.data?.resources?.[0]?.url ? [rawData.data.resources[0].url] : []) ||
         (rawData.resultUrl ? [rawData.resultUrl] : []) ||
         (rawData.url ? [rawData.url] : []) ||
         [];
 
       resultUrls = urls.filter(Boolean); // Remove null/undefined
 
-      console.log('[KIE FIX ✅] Extracted resultUrls:', resultUrls);
+      // ✅ PHASE 4.7.1: Enhanced logging for Veo3 debugging
+      if (provider.includes('veo3')) {
+        console.log('[KIE Veo3 ✅] Status check:', {
+          taskId,
+          state,
+          successFlag,
+          status,
+          urlCount: resultUrls.length,
+          firstUrl: resultUrls[0] ? resultUrls[0].substring(0, 60) + '...' : 'none',
+        });
+      } else {
+        console.log('[KIE FIX ✅] Extracted resultUrls:', resultUrls);
+      }
 
       if (!resultUrls || resultUrls.length === 0) {
-        console.warn('[KIE Service] ⚠️ No result URLs found in response!');
+        console.warn(`[KIE Service] ⚠️ No result URLs found in response for ${provider}!`);
         console.log('[KIE Service] Raw response data:', JSON.stringify(rawData, null, 2));
       }
     }
