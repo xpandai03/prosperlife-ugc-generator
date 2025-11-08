@@ -1617,6 +1617,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // POST /api/ai/media/retry/:id - Retry failed media generation (Phase 2)
+  app.post("/api/ai/media/retry/:id", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Fetch asset
+      const asset = await storage.getMediaAsset(id);
+      if (!asset) {
+        return res.status(404).json({ error: "Asset not found" });
+      }
+
+      // Verify ownership
+      if (asset.userId !== req.userId) {
+        return res.status(404).json({ error: "Asset not found" });
+      }
+
+      // Only allow retry for failed assets
+      if (asset.status !== 'error') {
+        return res.status(400).json({
+          error: "Can only retry failed generations",
+          currentStatus: asset.status
+        });
+      }
+
+      // Check retry limit (max 3 attempts)
+      const currentRetryCount = asset.retryCount || 0;
+      if (currentRetryCount >= 3) {
+        return res.status(400).json({
+          error: "Maximum retry attempts reached",
+          message: "This generation has already been retried 3 times. Please create a new generation.",
+          retryCount: currentRetryCount,
+        });
+      }
+
+      console.log(`[AI Retry] Retrying ${asset.type} generation ${id} for user ${req.userId} (attempt ${currentRetryCount + 1}/3)`);
+
+      // Reset asset to processing state
+      await storage.updateMediaAsset(id, {
+        status: 'processing',
+        errorMessage: null,
+        retryCount: currentRetryCount + 1,
+      });
+
+      // Restart generation process with original parameters
+      processMediaGeneration(id, {
+        provider: asset.provider,
+        type: asset.type,
+        prompt: asset.prompt,
+        referenceImageUrl: asset.referenceImageUrl || undefined,
+        options: asset.metadata || null,
+      }).catch((err) => {
+        console.error(`[AI Retry] Background retry failed for ${id}:`, err);
+      });
+
+      res.json({
+        success: true,
+        assetId: id,
+        status: 'processing',
+        retryCount: currentRetryCount + 1,
+        message: `Retry attempt ${currentRetryCount + 1} of 3 started`,
+      });
+
+    } catch (error: any) {
+      console.error("[AI Retry] Error:", error);
+      res.status(500).json({
+        error: "Failed to retry generation",
+        details: error.message,
+      });
+    }
+  });
+
   // ========================================
   // BACKGROUND PROCESSING: Media Generation (Phase 4)
   // ========================================

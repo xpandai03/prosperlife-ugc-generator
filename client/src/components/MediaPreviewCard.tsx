@@ -259,6 +259,24 @@ export function MediaPreviewCard({ asset, onClick }: MediaPreviewCardProps) {
           </p>
         </div>
       )}
+
+      {/* Retry hint for failed assets */}
+      {asset.status === 'error' && asset.retryCount < 3 && (
+        <div className="px-4 pb-4 pt-2">
+          <p className="text-xs text-red-300/60 text-center hover:text-red-300/80 transition-colors">
+            Click to retry ({3 - asset.retryCount} {3 - asset.retryCount === 1 ? 'attempt' : 'attempts'} remaining)
+          </p>
+        </div>
+      )}
+
+      {/* Max retries reached */}
+      {asset.status === 'error' && asset.retryCount >= 3 && (
+        <div className="px-4 pb-4 pt-2">
+          <p className="text-xs text-red-300/40 text-center">
+            Max retry attempts reached
+          </p>
+        </div>
+      )}
     </Card>
   );
 }

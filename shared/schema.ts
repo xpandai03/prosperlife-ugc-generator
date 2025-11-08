@@ -169,6 +169,10 @@ export const mediaAssets = pgTable("media_assets", {
   metadata: jsonb("metadata"),
   apiResponse: jsonb("api_response"),
 
+  // UGC Chain Support (Phase 5)
+  generationMode: text("generation_mode"), // 'nanobana+veo3' | 'veo3-only' | 'sora2'
+  chainMetadata: jsonb("chain_metadata"), // Stores: { step, nanoImageUrl, imageAnalysis, videoPrompt, timestamps }
+
   // Timestamps
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
   updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
