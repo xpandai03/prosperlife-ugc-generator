@@ -10,6 +10,7 @@
  */
 
 import FormData from 'form-data';
+import axios from 'axios';
 
 const KIE_API_KEY = process.env.KIE_API_KEY;
 const KIE_BASE_URL = 'https://api.kie.ai';
@@ -90,7 +91,7 @@ export const kieService = {
       }
     }
 
-    console.log('[KIE Upload] Blob or local URL detected, fetching and uploading to KIE...');
+    console.log('[KIE Upload] Blob or local URL detected, uploading file to KIE...');
 
     try {
       // Fetch the file to get the actual data
@@ -106,11 +107,11 @@ export const kieService = {
       // Determine file extension from content-type
       const contentType = fileResponse.headers.get('content-type') || 'image/jpeg';
       const extension = contentType.split('/')[1] || 'jpg';
-      const fileName = `ugc-upload-${Date.now()}.${extension}`;
+      const fileName = `ugc_upload_${Date.now()}.${extension}`;
 
       console.log('[KIE Upload] File fetched, size:', buffer.length, 'bytes, type:', contentType);
 
-      // Create form data using form-data library (Node.js compatible)
+      // Create form data using form-data library
       const form = new FormData();
       form.append('file', buffer, {
         filename: fileName,
@@ -119,28 +120,21 @@ export const kieService = {
 
       console.log('[KIE Upload] Uploading to KIE File Upload API...');
 
-      // Upload to KIE with form-data headers
-      const response = await fetch(`${KIE_BASE_URL}/api/v1/file/upload`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${KIE_API_KEY}`,
-          ...form.getHeaders(), // This adds the correct multipart boundary
-        },
-        body: form as any, // form-data stream is compatible with fetch body
-      });
+      // Upload to KIE using axios with form-data
+      const uploadResponse = await axios.post(
+        `${KIE_BASE_URL}/api/v1/file/upload`,
+        form,
+        {
+          headers: {
+            'Authorization': `Bearer ${KIE_API_KEY}`,
+            ...form.getHeaders(), // Adds Content-Type with boundary
+          },
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+        }
+      );
 
-      const responseText = await response.text();
-      if (responseText.trim() === '') {
-        throw new Error(`KIE Upload API returned empty response (HTTP ${response.status})`);
-      }
-
-      let data: any;
-      try {
-        data = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error('[KIE Upload] JSON parse error:', parseError);
-        throw new Error(`KIE Upload API returned invalid JSON: ${responseText.substring(0, 200)}`);
-      }
+      const data = uploadResponse.data;
 
       if (data.code !== 200 && !data.success) {
         console.error('[KIE Upload] API Error:', data);
@@ -148,18 +142,22 @@ export const kieService = {
       }
 
       // Extract public URL from response
-      const publicUrl = data.data?.fileUrl || data.data?.url || data.fileUrl || data.url;
+      const uploadedUrl = data.data?.fileUrl || data.data?.url || data.fileUrl || data.url;
 
-      if (!publicUrl) {
-        console.error('[KIE Upload] No URL in response:', data);
+      if (!uploadedUrl) {
+        console.error('[KIE Upload] No fileUrl in response:', data);
         throw new Error('KIE Upload API did not return a file URL');
       }
 
-      console.log('[KIE Upload] ✅ File uploaded successfully:', publicUrl.substring(0, 80) + '...');
-      return publicUrl;
+      console.log('[KIE Upload ✅] Uploaded to:', uploadedUrl);
+      return uploadedUrl;
 
     } catch (error: any) {
-      console.error('[KIE Upload] ❌ File upload failed:', error);
+      console.error('[KIE Upload ❌] Upload failed:', error.message);
+      if (error.response) {
+        console.error('[KIE Upload] Response status:', error.response.status);
+        console.error('[KIE Upload] Response data:', error.response.data);
+      }
       console.error('[KIE Upload] Error details:', error.stack || error.toString());
       throw new Error(`Failed to upload file to KIE: ${error.message}`);
     }
