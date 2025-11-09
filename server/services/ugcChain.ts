@@ -22,7 +22,7 @@ import { GenerationMode } from '../prompts/ugc-presets';
  * Chain workflow state stored in chain_metadata
  */
 export interface ChainMetadata {
-  step: 'generating_image' | 'analyzing_image' | 'generating_video' | 'completed' | 'error';
+  step: 'generating_image' | 'analyzing_image' | 'generating_video' | 'completed' | 'error' | 'fallback_to_veo3';
   nanoImageUrl?: string;
   nanoTaskId?: string;
   imageAnalysis?: string;
@@ -36,6 +36,8 @@ export interface ChainMetadata {
     videoCompleted?: string;
   };
   error?: string;
+  imageRetryCount?: number; // Track retry attempts for ready-but-no-URLs edge case
+  fallbackReason?: string; // Reason for fallback to Veo3
 }
 
 /**
@@ -103,6 +105,8 @@ export const ugcChainService = {
 
   /**
    * Step 2: Check if image is ready, if so move to Step 3
+   * Includes retry logic for edge case: status=ready but resultUrls=[]
+   * Falls back to Veo3-only mode if NanoBanana fails after retries
    */
   async checkImageStatus(assetId: string): Promise<boolean> {
     const asset = await storage.getMediaAsset(assetId);
@@ -121,20 +125,62 @@ export const ugcChainService = {
       const status = await kieService.checkStatus(asset.taskId, 'kie-flux-kontext');
       console.log(`[UGC Chain] Step 2: KIE status response: status=${status.status}, resultUrls count=${status.resultUrls?.length || 0}`);
 
+      // Handle failed status
       if (status.status === 'failed') {
         console.error(`[UGC Chain] ❌ Step 2: Image generation failed: ${status.errorMessage}`);
-        await this.handleChainError(assetId, 'generating_image', status.errorMessage || 'Image generation failed');
-        return false;
+        console.log(`[UGC Chain] ⚠️ Falling back to Veo3-only mode (Mode B)`);
+
+        // Fallback to Veo3 instead of complete failure
+        const productImageUrl = asset.metadata && typeof asset.metadata === 'object' && 'productImageUrl' in asset.metadata
+          ? (asset.metadata as any).productImageUrl
+          : undefined;
+        await this.fallbackToVeo3(assetId, 'Image generation failed', productImageUrl);
+        return true; // Continue chain with fallback
       }
 
+      // Handle success case with URLs
       if (status.status === 'ready' && status.resultUrls && status.resultUrls.length > 0) {
         const imageUrl = status.resultUrls[0];
         console.log(`[UGC Chain] ✅ Step 2 complete: NanoBanana image ready`);
         console.log(`[UGC Chain] Image URL: ${imageUrl.substring(0, 80)}...`);
 
+        // Reset retry count on success
+        chainMetadata.imageRetryCount = 0;
+        await storage.updateMediaAsset(assetId, { chainMetadata });
+
         // Move to Step 3: Analyze image
         await this.analyzeImage(assetId, imageUrl);
         return true;
+      }
+
+      // ⚠️ EDGE CASE: status=ready but resultUrls=[] or undefined
+      if (status.status === 'ready' && (!status.resultUrls || status.resultUrls.length === 0)) {
+        const retryCount = chainMetadata.imageRetryCount || 0;
+        const MAX_RETRIES = 5;
+
+        console.log(`[Flux-Kontext Retry] Attempt ${retryCount + 1}/${MAX_RETRIES} -- Status is ready but no URLs yet...`);
+
+        if (retryCount < MAX_RETRIES) {
+          // Increment retry count and wait for next poll
+          chainMetadata.imageRetryCount = retryCount + 1;
+          await storage.updateMediaAsset(assetId, { chainMetadata });
+
+          console.log(`[Flux-Kontext Retry] Will retry after next polling interval`);
+          return false; // Continue polling
+        } else {
+          // Max retries exceeded - fall back to Veo3
+          console.error(`[Flux-Kontext ⚠️] Image missing after ${MAX_RETRIES} retries -- falling back to Veo3 direct mode`);
+
+          const productImageUrl = asset.metadata && typeof asset.metadata === 'object' && 'productImageUrl' in asset.metadata
+            ? (asset.metadata as any).productImageUrl
+            : undefined;
+          await this.fallbackToVeo3(
+            assetId,
+            `Image fetch failed after ${MAX_RETRIES} retries (status=ready but no URLs)`,
+            productImageUrl
+          );
+          return true; // Continue chain with fallback
+        }
       }
 
       // Still processing
@@ -142,8 +188,21 @@ export const ugcChainService = {
       return false;
     } catch (error: any) {
       console.error(`[UGC Chain] ❌ Step 2 error:`, error);
-      await this.handleChainError(assetId, 'generating_image', error.message);
-      return false;
+
+      // On error, try to fallback to Veo3 instead of complete failure
+      console.log(`[UGC Chain] ⚠️ Error occurred, attempting fallback to Veo3...`);
+      try {
+        const asset = await storage.getMediaAsset(assetId);
+        const productImageUrl = asset?.metadata && typeof asset.metadata === 'object' && 'productImageUrl' in asset.metadata
+          ? (asset.metadata as any).productImageUrl
+          : undefined;
+        await this.fallbackToVeo3(assetId, `Image generation error: ${error.message}`, productImageUrl);
+        return true; // Continue chain with fallback
+      } catch (fallbackError) {
+        console.error(`[UGC Chain] ❌ Fallback also failed:`, fallbackError);
+        await this.handleChainError(assetId, 'generating_image', error.message);
+        return false;
+      }
     }
   },
 
@@ -161,7 +220,9 @@ export const ugcChainService = {
       }
 
       const chainMetadata = asset.chainMetadata as ChainMetadata;
-      const promptVariables = asset.metadata?.promptVariables as PromptVariables;
+      const promptVariables = (asset.metadata && typeof asset.metadata === 'object' && 'promptVariables' in asset.metadata
+        ? asset.metadata.promptVariables
+        : undefined) as PromptVariables | undefined;
 
       if (!promptVariables) {
         throw new Error('Missing promptVariables in asset metadata');
@@ -214,7 +275,7 @@ Be specific and detailed - this description will be used to create a video based
       await storage.updateMediaAsset(assetId, {
         chainMetadata,
         metadata: {
-          ...asset.metadata,
+          ...(asset.metadata || {}),
           imageAnalysis,
           videoPrompt,
         },
@@ -233,21 +294,22 @@ Be specific and detailed - this description will be used to create a video based
 
   /**
    * Step 4: Start Veo3 video generation with analyzed image as reference
+   * Image URL is optional - if not provided, generates text-only video
    */
-  async startVideoGeneration(assetId: string, videoPrompt: string, imageUrl: string): Promise<void> {
+  async startVideoGeneration(assetId: string, videoPrompt: string, imageUrl?: string): Promise<void> {
     console.log(`[UGC Chain] Step 4: Starting Veo3 video generation`);
     console.log(`[UGC Chain] Asset ID: ${assetId}`);
     console.log(`[UGC Chain] Video prompt length: ${videoPrompt.length} chars`);
-    console.log(`[UGC Chain] Reference image: ${imageUrl.substring(0, 80)}...`);
+    console.log(`[UGC Chain] Reference image: ${imageUrl ? imageUrl.substring(0, 80) + '...' : 'None (text-only mode)'}`);
 
     try {
-      // Submit to KIE Veo3 with image as reference
+      // Submit to KIE Veo3 with image as reference (if available)
       console.log(`[UGC Chain] Step 4: Submitting to KIE Veo3 API...`);
       const result = await kieService.generateVideo({
         prompt: videoPrompt,
         model: 'veo3',
         aspectRatio: '16:9',
-        imageUrls: [imageUrl], // Use NanoBanana image as reference
+        imageUrls: imageUrl ? [imageUrl] : undefined, // Use image if available, otherwise text-only
       });
 
       const asset = await storage.getMediaAsset(assetId);
@@ -334,6 +396,79 @@ Be specific and detailed - this description will be used to create a video based
       console.error(`[UGC Chain] ❌ Step 5 error:`, error);
       await this.handleChainError(assetId, 'generating_video', error.message);
       return false;
+    }
+  },
+
+  /**
+   * Fallback to Veo3-only mode (Mode B) when NanoBanana fails
+   * Generates video directly with Veo3 using product image (if available) or text-only
+   */
+  async fallbackToVeo3(assetId: string, reason: string, productImageUrl?: string): Promise<void> {
+    console.log(`[UGC Chain Fallback] Starting Veo3 fallback for asset ${assetId}`);
+    console.log(`[UGC Chain Fallback] Reason: ${reason}`);
+    console.log(`[UGC Chain Fallback] Product image available: ${!!productImageUrl}`);
+
+    try {
+      const asset = await storage.getMediaAsset(assetId);
+      if (!asset) {
+        throw new Error(`Asset ${assetId} not found`);
+      }
+
+      const chainMetadata = asset.chainMetadata as ChainMetadata;
+      const promptVariables = (asset.metadata && typeof asset.metadata === 'object' && 'promptVariables' in asset.metadata
+        ? asset.metadata.promptVariables
+        : undefined) as PromptVariables | undefined;
+
+      if (!promptVariables) {
+        throw new Error('Missing promptVariables in asset metadata');
+      }
+
+      // Update chain metadata: mark as fallback
+      chainMetadata.step = 'fallback_to_veo3';
+      chainMetadata.fallbackReason = reason;
+      if (!chainMetadata.timestamps.imageCompleted) {
+        chainMetadata.timestamps.imageCompleted = new Date().toISOString(); // Mark image phase done
+      }
+
+      await storage.updateMediaAsset(assetId, {
+        chainMetadata,
+      });
+
+      console.log(`[UGC Chain Fallback] Updated chain state to fallback_to_veo3`);
+
+      // Generate Veo3 video prompt using Mode B (text-only mode)
+      const videoPrompt = generatePrompt(
+        GenerationMode.MODE_B, // Use Mode B for Veo3-only fallback
+        promptVariables
+      );
+
+      console.log(`[UGC Chain Fallback] Video prompt generated (${videoPrompt.length} chars)`);
+      console.log(`[UGC Chain Fallback] Prompt preview: ${videoPrompt.substring(0, 100)}...`);
+
+      // Update chain metadata with video prompt
+      chainMetadata.videoPrompt = videoPrompt;
+      chainMetadata.imageAnalysis = 'N/A (fallback mode - no image analysis)';
+      chainMetadata.timestamps.analysisCompleted = new Date().toISOString();
+
+      await storage.updateMediaAsset(assetId, {
+        chainMetadata,
+        metadata: {
+          ...(asset.metadata || {}),
+          videoPrompt,
+          fallbackMode: true,
+        },
+      });
+
+      console.log(`[UGC Chain Fallback] ✅ Proceeding to Veo3 video generation (Mode B)`);
+
+      // Start Veo3 video generation
+      // If product image exists, use it as reference; otherwise text-only
+      await this.startVideoGeneration(assetId, videoPrompt, productImageUrl);
+
+    } catch (error: any) {
+      console.error(`[UGC Chain Fallback] ❌ Fallback failed:`, error);
+      await this.handleChainError(assetId, 'fallback_to_veo3', error.message);
+      throw error;
     }
   },
 

@@ -1394,6 +1394,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // GET /api/social/scheduled - Get all scheduled posts for current user (Phase 7.3)
+  app.get("/api/social/scheduled", requireAuth, async (req, res) => {
+    try {
+      console.log(`[Scheduled Posts] Fetching scheduled posts for user ${req.userId}`);
+
+      // Query parameters for filtering
+      const { status, limit = '50' } = req.query;
+
+      // Build query
+      let query = db
+        .select()
+        .from(socialPosts)
+        .where(eq(socialPosts.userId, req.userId as string))
+        .orderBy(desc(socialPosts.scheduledFor));
+
+      // Apply status filter if provided
+      if (status && typeof status === 'string') {
+        query = query.where(eq(socialPosts.status, status));
+      }
+
+      // Apply limit
+      const limitNum = parseInt(limit as string, 10);
+      if (!isNaN(limitNum) && limitNum > 0) {
+        query = query.limit(limitNum);
+      }
+
+      const posts = await query;
+
+      console.log(`[Scheduled Posts] Found ${posts.length} posts`);
+
+      res.json({
+        posts,
+        count: posts.length
+      });
+    } catch (error: any) {
+      console.error("[Scheduled Posts] Error fetching scheduled posts:", error);
+      res.status(500).json({
+        error: "Failed to fetch scheduled posts",
+        details: error.message,
+      });
+    }
+  });
+
   // ========================================
   // AI MEDIA GENERATION ENDPOINTS (Phase 4)
   // ========================================
@@ -1956,29 +1999,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Handle different chain steps
         if (step === 'generating_image') {
-          // ✅ Add per-step timeout for image generation (10 minutes max)
+          // ✅ Reduced timeout for dev testing: 4 minutes (allows for retry mechanism)
           const imageStartTime = chainMetadata.timestamps?.imageStarted;
           if (imageStartTime) {
             const imageElapsed = Date.now() - new Date(imageStartTime).getTime();
             const imageMinutes = Math.round(imageElapsed / 60000);
 
-            if (imageElapsed > 10 * 60 * 1000) { // 10 minutes
+            if (imageElapsed > 4 * 60 * 1000) { // 4 minutes (reduced from 10 for faster fallback)
               console.error(`[Chain Workflow] ❌ Image generation timeout after ${imageMinutes} minutes`);
+              console.log(`[Chain Workflow] ⚠️ Triggering fallback to Veo3...`);
+
+              // Attempt fallback instead of hard failure
+              try {
+                const asset = await storage.getMediaAsset(assetId);
+                const productImageUrl = asset?.metadata && typeof asset.metadata === 'object' && 'productImageUrl' in asset.metadata
+                  ? (asset.metadata as any).productImageUrl
+                  : undefined;
+                await ugcChainService.fallbackToVeo3(
+                  assetId,
+                  `Image generation timeout after ${imageMinutes} minutes`,
+                  productImageUrl
+                );
+                // Continue polling for video generation
+              } catch (fallbackError: any) {
+                console.error(`[Chain Workflow] ❌ Fallback failed:`, fallbackError);
+                await ugcChainService.handleChainError(
+                  assetId,
+                  'generating_image',
+                  `NanoBanana timeout + fallback failed: ${fallbackError?.message || 'Unknown error'}`
+                );
+                return;
+              }
+            } else {
+              // Poll for image completion
+              const imageReady = await ugcChainService.checkImageStatus(assetId);
+              if (imageReady) {
+                console.log(`[Chain Workflow] ✅ Image ready, moved to analysis/video generation`);
+              }
+            }
+          } else {
+            // No start time, just poll
+            const imageReady = await ugcChainService.checkImageStatus(assetId);
+            if (imageReady) {
+              console.log(`[Chain Workflow] ✅ Image ready, moved to analysis/video generation`);
+            }
+          }
+        } else if (step === 'fallback_to_veo3') {
+          // Fallback triggered - transition to video generation
+          console.log(`[Chain Workflow] ⚠️ Fallback mode active, transitioning to video generation...`);
+          // The fallbackToVeo3 method already starts video generation
+          // Just wait for next poll to detect generating_video state
+        } else if (step === 'generating_video') {
+          // ✅ Video timeout: 6 minutes (reduced from unlimited for faster error detection)
+          const videoStartTime = chainMetadata.timestamps?.videoStarted;
+          if (videoStartTime) {
+            const videoElapsed = Date.now() - new Date(videoStartTime).getTime();
+            const videoMinutes = Math.round(videoElapsed / 60000);
+
+            if (videoElapsed > 6 * 60 * 1000) { // 6 minutes
+              console.error(`[Chain Workflow] ❌ Video generation timeout after ${videoMinutes} minutes`);
               await ugcChainService.handleChainError(
                 assetId,
-                'generating_image',
-                `NanoBanana image generation timed out after ${imageMinutes} minutes`
+                'generating_video',
+                `Veo3 video generation timed out after ${videoMinutes} minutes`
               );
               return;
             }
           }
 
-          // Poll for image completion
-          const imageReady = await ugcChainService.checkImageStatus(assetId);
-          if (imageReady) {
-            console.log(`[Chain Workflow] ✅ Image ready, moved to analysis/video generation`);
-          }
-        } else if (step === 'generating_video') {
           // Poll for video completion
           const videoReady = await ugcChainService.checkVideoStatus(assetId);
           if (videoReady) {
