@@ -471,9 +471,9 @@ export const kieService = {
     let endpoint: string;
 
     if (provider.includes('sora2') || provider.includes('sora-2')) {
-      // Sora2 is a marketplace/playground model, not a standard API model
-      // Try playground namespace based on callback messages showing "Playground task"
-      endpoint = `${KIE_BASE_URL}/api/v1/playground/record-info?taskId=${taskId}`;
+      // Sora2 uses /jobs/recordInfo endpoint (camelCase, no hyphen!)
+      // Source: n8n workflow line 630 - confirmed working endpoint
+      endpoint = `${KIE_BASE_URL}/api/v1/jobs/recordInfo?taskId=${taskId}`;
     } else if (provider.includes('veo3')) {
       endpoint = `${KIE_BASE_URL}/api/v1/veo/record-info?taskId=${taskId}`;
     } else if (provider.includes('4o-image')) {
