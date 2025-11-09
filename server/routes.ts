@@ -47,7 +47,7 @@ const processVideoAdvancedSchema = z.object({
 // Phase 4: UGC Preset Generation Schema
 const generateUGCPresetSchema = z.object({
   productName: z.string().min(1).max(100),
-  productFeatures: z.string().min(10).max(500),
+  productFeatures: z.string().min(10).max(2000), // Increased from 500 to 2000 for detailed product descriptions
   customerPersona: z.string(),
   videoSetting: z.string(),
   generationMode: z.enum(["nanobana+veo3", "veo3-only", "sora2"]),

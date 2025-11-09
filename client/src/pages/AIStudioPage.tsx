@@ -234,10 +234,10 @@ export default function AIStudioPage() {
       return;
     }
 
-    if (productFeatures.length < 10 || productFeatures.length > 500) {
+    if (productFeatures.length < 10 || productFeatures.length > 2000) {
       toast({
         title: 'Invalid features description',
-        description: 'Features must be between 10 and 500 characters',
+        description: 'Features must be between 10 and 2000 characters',
         variant: 'destructive',
       });
       return;
@@ -355,7 +355,7 @@ export default function AIStudioPage() {
                   onChange={(e) => setProductFeatures(e.target.value)}
                   placeholder="e.g., 30g protein per serving, chocolate flavor, keto-friendly, zero sugar"
                   rows={3}
-                  maxLength={500}
+                  maxLength={2000}
                   className="bg-white/10 border-white/20 text-white placeholder:text-white/50 resize-none"
                   required
                 />
@@ -364,7 +364,7 @@ export default function AIStudioPage() {
                     Highlight what makes your product special
                   </p>
                   <p className="text-xs text-white/50">
-                    {productFeatures.length} / 500
+                    {productFeatures.length} / 2000
                   </p>
                 </div>
                 {productFeatures.length > 0 && productFeatures.length < 10 && (
