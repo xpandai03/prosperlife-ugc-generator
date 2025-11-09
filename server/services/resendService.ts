@@ -37,14 +37,23 @@ export async function sendVideoCompleteNotification(params: NotificationParams) 
 
   try {
     // 1. Fetch user email
+    console.log(`[Resend] Fetching user data for userId: ${params.userId}`);
     const user = await storage.getUser(params.userId);
 
+    console.log(`[Resend] User lookup result:`, {
+      found: !!user,
+      hasEmail: !!user?.email,
+      email: user?.email || 'MISSING',
+      fullName: user?.fullName || 'MISSING',
+    });
+
     if (!user?.email) {
-      console.warn(`[Resend] No email found for user ${params.userId}`);
+      console.warn(`[Resend] ❌ Cannot send email - no email found for user ${params.userId}`);
+      console.warn(`[Resend] User record:`, JSON.stringify(user, null, 2));
       return { success: false, reason: 'no_email' };
     }
 
-    console.log(`[Resend] Sending ${params.status} notification to ${user.email}`, {
+    console.log(`[Resend] ✅ Preparing ${params.status} notification for ${user.email}`, {
       assetId: params.assetId,
       assetType: params.assetType,
     });

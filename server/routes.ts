@@ -144,6 +144,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         console.log('[Auth Webhook] New user created:', { userId, email, name });
 
+        // ✅ CRITICAL FIX: Create/update user in Neon database (for Resend notifications)
+        try {
+          const existingNeonUser = await storage.getUser(userId);
+
+          if (!existingNeonUser) {
+            // Create new user in Neon DB
+            await storage.createUser({
+              id: userId,
+              email: email,
+              fullName: name,
+              subscriptionStatus: 'free',
+            });
+            console.log('[Auth Webhook] ✅ User created in Neon DB:', { userId, email });
+          } else {
+            // Update existing user with email/name (in case they were missing)
+            await storage.updateUser(userId, {
+              email: email,
+              fullName: name,
+            });
+            console.log('[Auth Webhook] ✅ User updated in Neon DB:', { userId, email });
+          }
+        } catch (neonError: any) {
+          console.error('[Auth Webhook] Failed to sync user to Neon DB:', neonError);
+          // Continue - don't fail the webhook
+        }
+
         // Debug: Check if lateService and createProfile exist
         console.log('[Auth Webhook] lateService type:', typeof lateService);
         console.log('[Auth Webhook] createProfile type:', typeof lateService?.createProfile);
