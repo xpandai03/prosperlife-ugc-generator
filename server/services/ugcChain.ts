@@ -17,6 +17,7 @@ import { openaiService } from './openai';
 import { storage } from '../storage';
 import { generatePrompt, injectImageAnalysis, type PromptVariables } from '../prompts/ugc-presets';
 import { GenerationMode } from '../prompts/ugc-presets';
+import { sendVideoCompleteNotification } from './resendService';
 
 /**
  * Chain workflow state stored in chain_metadata
@@ -386,6 +387,20 @@ Be specific and detailed - this description will be used to create a video based
 
         console.log(`[UGC Chain] 🎉 CHAIN WORKFLOW COMPLETE for asset ${assetId}!`);
         console.log(`[UGC Chain] Total chain time: ${this.getChainDuration(chainMetadata)}`);
+
+        // Send email notification (Phase 8)
+        await sendVideoCompleteNotification({
+          userId: asset.userId,
+          assetId,
+          status: 'ready',
+          assetType: 'ugc-ad',
+          videoUrl,
+          generationMode: asset.generationMode || undefined,
+        }).catch((error) => {
+          // Don't fail the workflow if email fails
+          console.error('[UGC Chain] Email notification failed:', error);
+        });
+
         return true;
       }
 
@@ -494,6 +509,17 @@ Be specific and detailed - this description will be used to create a video based
         status: 'error',
         errorMessage: `Chain failed at ${step}: ${errorMessage}`,
         chainMetadata,
+      });
+
+      // Send email notification for error (Phase 8)
+      await sendVideoCompleteNotification({
+        userId: asset.userId,
+        assetId,
+        status: 'error',
+        assetType: 'ugc-ad',
+        errorMessage: `Chain failed at ${step}: ${errorMessage}`,
+      }).catch((emailError) => {
+        console.error('[UGC Chain] Email notification failed:', emailError);
       });
     } catch (updateError) {
       console.error(`[UGC Chain] Failed to update error state:`, updateError);

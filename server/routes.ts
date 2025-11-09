@@ -13,6 +13,7 @@ import { generateMedia, checkMediaStatus } from "./services/mediaGen";
 import { GenerationMode, generatePrompt, formatICPForPrompt, formatSceneForPrompt, type PromptVariables } from "./prompts/ugc-presets";
 import { ugcChainService } from "./services/ugcChain";
 import { supabaseAdmin } from "./services/supabaseAuth";
+import { sendVideoCompleteNotification } from "./services/resendService";
 import { requireAuth } from "./middleware/auth";
 import { checkVideoLimit, checkPostLimit, checkMediaGenerationLimit, incrementVideoUsage, incrementPostUsage, incrementMediaGenerationUsage, getCurrentUsage, FREE_VIDEO_LIMIT, FREE_POST_LIMIT, FREE_MEDIA_GENERATION_LIMIT } from "./services/usageLimits";
 import { db } from "./db";
@@ -241,6 +242,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
 
           console.log(`[Sora2 Callback] Asset ${asset.id} updated to ready`);
+
+          // Send email notification (Phase 8)
+          await sendVideoCompleteNotification({
+            userId: asset.userId,
+            assetId: asset.id,
+            status: 'ready',
+            assetType: 'ugc-ad',
+            videoUrl,
+            generationMode: 'sora2',
+          }).catch((error) => {
+            console.error('[Sora2 Callback] Email notification failed:', error);
+          });
         } else {
           console.error('[Sora2 Callback] Success but no resultUrls found');
           await storage.updateMediaAsset(asset.id, {
@@ -263,6 +276,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         console.log(`[Sora2 Callback] Asset ${asset.id} updated to error`);
+
+        // Send email notification for error (Phase 8)
+        await sendVideoCompleteNotification({
+          userId: asset.userId,
+          assetId: asset.id,
+          status: 'error',
+          assetType: 'ugc-ad',
+          errorMessage: `Sora2 Error (${failCode}): ${errorMessage}`,
+        }).catch((error) => {
+          console.error('[Sora2 Callback] Email notification failed:', error);
+        });
       }
       // Handle unknown state
       else {
