@@ -465,8 +465,8 @@ export const kieService = {
     let endpoint: string;
 
     if (provider.includes('sora2') || provider.includes('sora-2')) {
-      // Sora2 uses unified jobs query endpoint
-      endpoint = `${KIE_BASE_URL}/api/v1/jobs/queryTask?taskId=${taskId}`;
+      // Sora2 uses unified jobs query endpoint (POST method, not GET)
+      endpoint = `${KIE_BASE_URL}/api/v1/jobs/queryTask`;
     } else if (provider.includes('veo3')) {
       endpoint = `${KIE_BASE_URL}/api/v1/veo/record-info?taskId=${taskId}`;
     } else if (provider.includes('4o-image')) {
@@ -477,11 +477,15 @@ export const kieService = {
       throw new Error(`Unknown provider: ${provider}`);
     }
 
+    // Sora2 uses POST, others use GET
+    const isSoraQuery = provider.includes('sora');
     const response = await fetch(endpoint, {
-      method: 'GET',
+      method: isSoraQuery ? 'POST' : 'GET',
       headers: {
         'Authorization': `Bearer ${KIE_API_KEY}`,
+        ...(isSoraQuery && { 'Content-Type': 'application/json' }),
       },
+      ...(isSoraQuery && { body: JSON.stringify({ taskId }) }),
     });
 
     const responseText = await response.text();
