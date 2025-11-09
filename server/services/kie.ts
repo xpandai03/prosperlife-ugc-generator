@@ -465,9 +465,9 @@ export const kieService = {
     let endpoint: string;
 
     if (provider.includes('sora2') || provider.includes('sora-2')) {
-      // Try standard record-info pattern under sora2 namespace
-      // Jobs API endpoints all returned 404, maybe it follows same pattern as veo3/flux
-      endpoint = `${KIE_BASE_URL}/api/v1/sora2/record-info?taskId=${taskId}`;
+      // Sora2 is a marketplace/playground model, not a standard API model
+      // Try playground namespace based on callback messages showing "Playground task"
+      endpoint = `${KIE_BASE_URL}/api/v1/playground/record-info?taskId=${taskId}`;
     } else if (provider.includes('veo3')) {
       endpoint = `${KIE_BASE_URL}/api/v1/veo/record-info?taskId=${taskId}`;
     } else if (provider.includes('4o-image')) {
