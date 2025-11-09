@@ -189,6 +189,95 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // POST /api/kie/sora2/callback - Handle KIE Sora2 completion callbacks (PUBLIC endpoint)
+  // This must be BEFORE requireAuth middleware since KIE doesn't send auth tokens
+  app.post('/api/kie/sora2/callback', async (req, res) => {
+    try {
+      const callbackData = req.body;
+
+      console.log('[Sora2 Callback] Received callback:', JSON.stringify(callbackData, null, 2));
+
+      // Extract data from callback
+      const { code, data, msg } = callbackData;
+
+      if (!data || !data.taskId) {
+        console.error('[Sora2 Callback] Invalid callback data - missing taskId');
+        return res.status(400).json({ error: 'Invalid callback data' });
+      }
+
+      const { taskId, state, resultJson, failCode, failMsg } = data;
+
+      // Find the asset by taskId
+      const asset = await storage.getMediaAssetByTaskId(taskId);
+      if (!asset) {
+        console.error(`[Sora2 Callback] No asset found for taskId: ${taskId}`);
+        return res.status(404).json({ error: 'Asset not found' });
+      }
+      console.log(`[Sora2 Callback] Found asset ${asset.id} for taskId ${taskId}, state: ${state}`);
+
+      // Handle success
+      if (state === 'success' && resultJson) {
+        let resultUrls: string[] = [];
+
+        // Parse resultJson (it's a JSON string according to docs)
+        try {
+          const parsed = typeof resultJson === 'string' ? JSON.parse(resultJson) : resultJson;
+          resultUrls = parsed.resultUrls || [];
+        } catch (parseError) {
+          console.error('[Sora2 Callback] Failed to parse resultJson:', parseError);
+        }
+
+        if (resultUrls.length > 0) {
+          const videoUrl = resultUrls[0];
+
+          console.log(`[Sora2 Callback] ✅ Video generated successfully: ${videoUrl.substring(0, 80)}...`);
+
+          await storage.updateMediaAsset(asset.id, {
+            status: 'ready',
+            resultUrl: videoUrl,
+            resultUrls: resultUrls,
+            completedAt: new Date(),
+            apiResponse: callbackData,
+          });
+
+          console.log(`[Sora2 Callback] Asset ${asset.id} updated to ready`);
+        } else {
+          console.error('[Sora2 Callback] Success but no resultUrls found');
+          await storage.updateMediaAsset(asset.id, {
+            status: 'error',
+            errorMessage: 'Video generated but no URL returned',
+            apiResponse: callbackData,
+          });
+        }
+      }
+      // Handle failure
+      else if (state === 'fail') {
+        const errorMessage = failMsg || 'Sora2 generation failed';
+
+        console.error(`[Sora2 Callback] ❌ Generation failed: ${errorMessage} (code: ${failCode})`);
+
+        await storage.updateMediaAsset(asset.id, {
+          status: 'error',
+          errorMessage: `Sora2 Error (${failCode}): ${errorMessage}`,
+          apiResponse: callbackData,
+        });
+
+        console.log(`[Sora2 Callback] Asset ${asset.id} updated to error`);
+      }
+      // Handle unknown state
+      else {
+        console.warn(`[Sora2 Callback] Unknown state: ${state}, keeping as processing`);
+      }
+
+      // Acknowledge receipt
+      res.json({ success: true, message: 'Callback processed' });
+
+    } catch (error: any) {
+      console.error('[Sora2 Callback] Error processing callback:', error);
+      res.status(500).json({ error: 'Failed to process callback', details: error.message });
+    }
+  });
+
   // Apply authentication middleware to all /api/* routes (except /api/auth/* above)
   app.use("/api/*", requireAuth);
 
@@ -1945,94 +2034,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         error: "Failed to retry generation",
         details: error.message,
       });
-    }
-  });
-
-  // POST /api/kie/sora2/callback - Handle KIE Sora2 completion callbacks (PUBLIC endpoint)
-  app.post('/api/kie/sora2/callback', async (req, res) => {
-    try {
-      const callbackData = req.body;
-
-      console.log('[Sora2 Callback] Received callback:', JSON.stringify(callbackData, null, 2));
-
-      // Extract data from callback
-      const { code, data, msg } = callbackData;
-
-      if (!data || !data.taskId) {
-        console.error('[Sora2 Callback] Invalid callback data - missing taskId');
-        return res.status(400).json({ error: 'Invalid callback data' });
-      }
-
-      const { taskId, state, resultJson, failCode, failMsg } = data;
-
-      // Find the asset by taskId
-      const asset = await storage.getMediaAssetByTaskId(taskId);
-      if (!asset) {
-        console.error(`[Sora2 Callback] No asset found for taskId: ${taskId}`);
-        return res.status(404).json({ error: 'Asset not found' });
-      }
-      console.log(`[Sora2 Callback] Found asset ${asset.id} for taskId ${taskId}, state: ${state}`);
-
-      // Handle success
-      if (state === 'success' && resultJson) {
-        let resultUrls: string[] = [];
-
-        // Parse resultJson (it's a JSON string according to docs)
-        try {
-          const parsed = typeof resultJson === 'string' ? JSON.parse(resultJson) : resultJson;
-          resultUrls = parsed.resultUrls || [];
-        } catch (parseError) {
-          console.error('[Sora2 Callback] Failed to parse resultJson:', parseError);
-        }
-
-        if (resultUrls.length > 0) {
-          const videoUrl = resultUrls[0];
-
-          console.log(`[Sora2 Callback] ✅ Video generated successfully: ${videoUrl.substring(0, 80)}...`);
-
-          await storage.updateMediaAsset(asset.id, {
-            status: 'ready',
-            resultUrl: videoUrl,
-            resultUrls: resultUrls,
-            completedAt: new Date(),
-            apiResponse: callbackData,
-          });
-
-          console.log(`[Sora2 Callback] Asset ${asset.id} updated to ready`);
-        } else {
-          console.error('[Sora2 Callback] Success but no resultUrls found');
-          await storage.updateMediaAsset(asset.id, {
-            status: 'error',
-            errorMessage: 'Video generated but no URL returned',
-            apiResponse: callbackData,
-          });
-        }
-      }
-      // Handle failure
-      else if (state === 'fail') {
-        const errorMessage = failMsg || 'Sora2 generation failed';
-
-        console.error(`[Sora2 Callback] ❌ Generation failed: ${errorMessage} (code: ${failCode})`);
-
-        await storage.updateMediaAsset(asset.id, {
-          status: 'error',
-          errorMessage: `Sora2 Error (${failCode}): ${errorMessage}`,
-          apiResponse: callbackData,
-        });
-
-        console.log(`[Sora2 Callback] Asset ${asset.id} updated to error`);
-      }
-      // Handle unknown state
-      else {
-        console.warn(`[Sora2 Callback] Unknown state: ${state}, keeping as processing`);
-      }
-
-      // Acknowledge receipt
-      res.json({ success: true, message: 'Callback processed' });
-
-    } catch (error: any) {
-      console.error('[Sora2 Callback] Error processing callback:', error);
-      res.status(500).json({ error: 'Failed to process callback', details: error.message });
     }
   });
 
