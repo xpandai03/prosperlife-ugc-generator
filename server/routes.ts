@@ -51,7 +51,10 @@ const generateUGCPresetSchema = z.object({
   customerPersona: z.string(),
   videoSetting: z.string(),
   generationMode: z.enum(["nanobana+veo3", "veo3-only", "sora2"]),
-  productImageUrl: z.string().url().optional(),
+  productImageUrl: z.preprocess(
+    (val) => (val === "" || val === null || val === undefined) ? undefined : val,
+    z.string().url().optional()
+  ),
 });
 
 // Configure multer for file uploads (in-memory storage)
@@ -1545,10 +1548,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       console.log(`[AI UGC Preset] Request from user: ${req.userId}`);
       console.log(`[AI UGC Preset] Has uploaded file:`, !!req.file);
+      console.log(`[AI UGC Preset] Request body:`, JSON.stringify(req.body, null, 2));
 
       // Validate input (text fields from form body)
       const validation = generateUGCPresetSchema.safeParse(req.body);
       if (!validation.success) {
+        console.error(`[AI UGC Preset] Validation failed:`, JSON.stringify(validation.error.errors, null, 2));
         return res.status(400).json({
           error: "Invalid input",
           details: validation.error.errors,
