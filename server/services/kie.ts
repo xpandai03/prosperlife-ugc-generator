@@ -508,30 +508,71 @@ export const kieService = {
     // This handles cases where URLs appear before successFlag changes to 1
     // ✅ PHASE 4.7.1: Check ALL possible KIE response paths (based on n8n workflow analysis)
     // Priority order verified from UGC Ads Veo & Sora.json n8n template:
+    //  - Flux-Kontext images: data.response.resultImageUrl (CRITICAL for NanoBanana!)
     //  - Veo3 videos: data.response.resultUrls (lines 411, 1008)
     //  - Sora videos: JSON.parse(data.resultJson).resultUrls (line 681)
-    //  - NanoBanana images: JSON.parse(data.resultJson).resultUrls (line 229)
-    let urls: any[] =
-      rawData.response?.resultUrls ||            // ✅ Veo3 PRIMARY path (videos)
-      rawData.resultJson?.resultUrls ||          // Sora/NanoBanana path (may be JSON string)
-      rawData.metadata?.response?.resultUrls ||  // Nested metadata path
-      rawData.response?.result_urls ||           // Snake_case variant
-      rawData.metadata?.resultUrls ||            // Direct metadata path
-      rawData.resultUrls ||                      // Direct path
-      (rawData.resultJson?.resultUrl ? [rawData.resultJson.resultUrl] : []) || // Single URL (Sora)
-      (rawData.response?.resultUrl ? [rawData.response.resultUrl] : []) ||  // Single URL (Veo3)
-      (rawData.response?.resultImageUrl ? [rawData.response.resultImageUrl] : []) || // Flux kontext
-      (rawData.response?.videoUrl ? [rawData.response.videoUrl] : []) || // Veo3 videoUrl
-      (rawData.videoUrl ? [rawData.videoUrl] : []) || // Direct videoUrl
-      rawData.outputs?.map((o: any) => o.url).filter(Boolean) ||
-      rawData.outputFiles?.filter(Boolean) ||
-      rawData.result?.map((r: any) => r.url).filter(Boolean) ||
-      rawData.records?.map((r: any) => r.fileUrl).filter(Boolean) ||
-      rawData.resources?.map((r: any) => r.url).filter(Boolean) ||
-      (rawData.data?.resources?.[0]?.url ? [rawData.data.resources[0].url] : []) ||
-      (rawData.resultUrl ? [rawData.resultUrl] : []) ||
-      (rawData.url ? [rawData.url] : []) ||
-      [];
+
+    let urls: any[] = [];
+
+    // Check each path and use the first non-empty result
+    if (rawData.response?.resultImageUrl) {
+      // ✅ CRITICAL: Flux-Kontext (NanoBanana) returns resultImageUrl, not resultUrls!
+      urls = [rawData.response.resultImageUrl];
+    } else if (rawData.response?.resultUrls && rawData.response.resultUrls.length > 0) {
+      // Veo3 PRIMARY path (videos)
+      urls = rawData.response.resultUrls;
+    } else if (rawData.resultJson?.resultUrls && rawData.resultJson.resultUrls.length > 0) {
+      // Sora/NanoBanana path (may be JSON string)
+      urls = rawData.resultJson.resultUrls;
+    } else if (rawData.response?.videoUrl) {
+      // Veo3 videoUrl
+      urls = [rawData.response.videoUrl];
+    } else if (rawData.response?.resultUrl) {
+      // Single URL (Veo3)
+      urls = [rawData.response.resultUrl];
+    } else if (rawData.resultJson?.resultUrl) {
+      // Single URL (Sora)
+      urls = [rawData.resultJson.resultUrl];
+    } else if (rawData.metadata?.response?.resultUrls && rawData.metadata.response.resultUrls.length > 0) {
+      // Nested metadata path
+      urls = rawData.metadata.response.resultUrls;
+    } else if (rawData.response?.result_urls && rawData.response.result_urls.length > 0) {
+      // Snake_case variant
+      urls = rawData.response.result_urls;
+    } else if (rawData.metadata?.resultUrls && rawData.metadata.resultUrls.length > 0) {
+      // Direct metadata path
+      urls = rawData.metadata.resultUrls;
+    } else if (rawData.resultUrls && rawData.resultUrls.length > 0) {
+      // Direct path
+      urls = rawData.resultUrls;
+    } else if (rawData.videoUrl) {
+      // Direct videoUrl
+      urls = [rawData.videoUrl];
+    } else if (rawData.outputs && rawData.outputs.length > 0) {
+      // Outputs array
+      urls = rawData.outputs.map((o: any) => o.url).filter(Boolean);
+    } else if (rawData.outputFiles && rawData.outputFiles.length > 0) {
+      // Output files
+      urls = rawData.outputFiles.filter(Boolean);
+    } else if (rawData.result && rawData.result.length > 0) {
+      // Result array
+      urls = rawData.result.map((r: any) => r.url).filter(Boolean);
+    } else if (rawData.records && rawData.records.length > 0) {
+      // Records array
+      urls = rawData.records.map((r: any) => r.fileUrl).filter(Boolean);
+    } else if (rawData.resources && rawData.resources.length > 0) {
+      // Resources array
+      urls = rawData.resources.map((r: any) => r.url).filter(Boolean);
+    } else if (rawData.data?.resources?.[0]?.url) {
+      // Nested resources
+      urls = [rawData.data.resources[0].url];
+    } else if (rawData.resultUrl) {
+      // Direct resultUrl
+      urls = [rawData.resultUrl];
+    } else if (rawData.url) {
+      // Direct url
+      urls = [rawData.url];
+    }
 
     // ✅ Handle case where resultJson is a JSON string (Sora/NanoBanana)
     if ((!urls || urls.length === 0) && typeof rawData.resultJson === 'string') {
