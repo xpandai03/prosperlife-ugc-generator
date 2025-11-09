@@ -466,7 +466,8 @@ export const kieService = {
 
     if (provider.includes('sora2') || provider.includes('sora-2')) {
       // Sora2 uses unified jobs query endpoint (POST method, not GET)
-      endpoint = `${KIE_BASE_URL}/api/v1/jobs/queryTask`;
+      // Try /query instead of /queryTask (queryTask returned 404)
+      endpoint = `${KIE_BASE_URL}/api/v1/jobs/query`;
     } else if (provider.includes('veo3')) {
       endpoint = `${KIE_BASE_URL}/api/v1/veo/record-info?taskId=${taskId}`;
     } else if (provider.includes('4o-image')) {
