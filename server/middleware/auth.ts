@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { supabaseAdmin } from '../services/supabaseAuth';
 import { storage } from '../storage';
+import * as creditService from '../services/creditService';
 
 /**
  * Extend Express Request type to include userId
@@ -159,6 +160,15 @@ export async function requireAuth(
               message: 'Failed to create user record. Please try again or contact support.',
             });
             return;
+          }
+
+          // Phase 9: Initialize credits for new user (50 free credits)
+          try {
+            await creditService.initializeUserCredits(user.id);
+            console.log(`[Auth Middleware] Initialized credits for new user: ${user.id}`);
+          } catch (creditError) {
+            console.error(`[Auth Middleware] Failed to initialize credits for ${user.id}:`, creditError);
+            // Don't fail the request - credits can be initialized later
           }
         } catch (dbError: any) {
           console.error('[Auth Middleware] Failed to create user in database:', dbError);

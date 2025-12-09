@@ -1,3 +1,9 @@
+/**
+ * BillingSettingsPage (Phase 9: XPAND Credits)
+ *
+ * Manages credit balance, purchase packages, and transaction history
+ */
+
 import { useState } from "react";
 import { useLocation, Link } from "wouter";
 import {
@@ -9,72 +15,102 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, CreditCard, Calendar, ExternalLink, Loader2 } from "lucide-react";
+import {
+  Coins,
+  CreditCard,
+  History,
+  ExternalLink,
+  Loader2,
+  Check,
+  TrendingUp,
+  Sparkles,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 
-interface UserData {
+interface CreditBalanceData {
+  balance: number;
+  lifetimePurchased: number;
+  lifetimeUsed: number;
+}
+
+interface CreditPackage {
   id: string;
-  email: string;
-  subscriptionStatus: string;
-  stripeCustomerId?: string;
-  subscriptionEndsAt?: string;
+  name: string;
+  credits: number;
+  priceUsd: number;
+  perCredit: number;
+}
+
+interface CreditTransaction {
+  id: string;
+  amount: number;
+  balanceAfter: number;
+  featureKey: string | null;
+  description: string;
+  createdAt: string;
 }
 
 export default function BillingSettingsPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const [selectedPackage, setSelectedPackage] = useState<string | null>(null);
 
-  // Fetch user data to check subscription status
-  const { data: userData, isLoading: userLoading, refetch } = useQuery<UserData>({
-    queryKey: ["/api/user"],
+  // Fetch credit balance
+  const { data: creditData, isLoading: creditsLoading } = useQuery<CreditBalanceData>({
+    queryKey: ["/api/credits"],
     enabled: !!user,
   });
 
-  const portalMutation = useMutation({
-    mutationFn: async () => {
-      const response = await apiRequest("POST", "/api/stripe/create-portal-session");
+  // Fetch available packages
+  const { data: packagesData } = useQuery<{ packages: CreditPackage[] }>({
+    queryKey: ["/api/credits/packages"],
+    enabled: !!user,
+  });
+
+  // Fetch transaction history
+  const { data: historyData, isLoading: historyLoading } = useQuery<{ transactions: CreditTransaction[] }>({
+    queryKey: ["/api/credits/history"],
+    enabled: !!user,
+  });
+
+  // Purchase mutation
+  const purchaseMutation = useMutation({
+    mutationFn: async (packageId: string) => {
+      const response = await apiRequest("POST", "/api/credits/purchase", { packageId });
       return await response.json();
     },
     onSuccess: (data: { success: boolean; url: string }) => {
       if (data.success && data.url) {
-        // Redirect to Stripe Customer Portal
+        // Redirect to Stripe Checkout
         window.location.href = data.url;
       }
     },
     onError: (error: any) => {
       toast({
         title: "Error",
-        description: error.message || "Failed to open billing portal. Please try again.",
+        description: error.message || "Failed to create checkout session. Please try again.",
         variant: "destructive",
       });
+      setSelectedPackage(null);
     },
   });
 
-  const handleManageSubscription = () => {
-    if (!userData?.stripeCustomerId) {
-      toast({
-        title: "No Subscription Found",
-        description: "You don't have an active subscription yet. Upgrade to Pro to get started.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    portalMutation.mutate();
+  const handlePurchase = (packageId: string) => {
+    setSelectedPackage(packageId);
+    purchaseMutation.mutate(packageId);
   };
 
-  const handleUpgrade = () => {
-    setLocation("/pricing");
-  };
+  const packages = packagesData?.packages || [];
+  const transactions = historyData?.transactions || [];
+  const balance = creditData?.balance ?? 0;
 
-  const isPro = userData?.subscriptionStatus === "pro";
-  const subscriptionEndsAt = userData?.subscriptionEndsAt
-    ? new Date(userData.subscriptionEndsAt)
-    : null;
+  // Highlight best value package
+  const bestValuePackage = "pro"; // 1500 credits
 
   return (
     <div className="min-h-screen bg-black pt-24 pb-8 px-6">
@@ -82,9 +118,9 @@ export default function BillingSettingsPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-white">Billing & Subscription</h1>
+            <h1 className="text-3xl font-bold text-white">Credits & Billing</h1>
             <p className="text-gray-400 mt-1">
-              Manage your subscription and payment methods
+              Purchase credits to use Streamline AI features
             </p>
           </div>
           <Link href="/">
@@ -92,216 +128,248 @@ export default function BillingSettingsPage() {
           </Link>
         </div>
 
-        {/* Current Plan Card */}
-        <Card className="bg-white/5 border-white/10">
+        {/* Credit Balance Card */}
+        <Card className="bg-gradient-to-br from-yellow-500/10 to-orange-500/10 border-yellow-500/30">
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle className="flex items-center gap-2 text-white">
-                  Current Plan
-                  {isPro && (
-                    <Badge className="bg-blue-600 text-white">
-                      <Sparkles className="h-3 w-3 mr-1" />
-                      Pro
-                    </Badge>
-                  )}
-                  {!isPro && <Badge variant="outline" className="border-white/20 text-gray-300">Free</Badge>}
+                  <Coins className="h-6 w-6 text-yellow-500" />
+                  Your Credit Balance
                 </CardTitle>
                 <CardDescription className="text-gray-400">
-                  {isPro
-                    ? "You have unlimited access to all features"
-                    : "Upgrade to Pro for unlimited videos and posts"}
+                  Use credits for AI video generation, social posting, and more
                 </CardDescription>
-              </div>
-              <div className="text-right">
-                <div className="text-2xl font-bold text-white">
-                  {isPro ? "$29" : "$0"}
-                </div>
-                <div className="text-sm text-gray-400">/month</div>
               </div>
             </div>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Plan Features */}
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">Video Conversions</span>
-                  <span className="font-medium text-white">
-                    {isPro ? "Unlimited" : "3/month"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">Social Media Posts</span>
-                  <span className="font-medium text-white">
-                    {isPro ? "Unlimited" : "3/month"}
-                  </span>
-                </div>
+          <CardContent>
+            {creditsLoading ? (
+              <div className="flex items-center gap-2 text-gray-400">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span>Loading balance...</span>
               </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">AI Clip Selection</span>
-                  <span className="font-medium text-white">✓ Included</span>
+            ) : (
+              <div className="grid md:grid-cols-3 gap-6">
+                <div className="text-center p-4 bg-white/5 rounded-lg">
+                  <div className="text-4xl font-bold text-yellow-500">
+                    {balance.toLocaleString()}
+                  </div>
+                  <div className="text-sm text-gray-400 mt-1">Available Credits</div>
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">Priority Support</span>
-                  <span className="font-medium text-white">
-                    {isPro ? "✓ Included" : "—"}
-                  </span>
+                <div className="text-center p-4 bg-white/5 rounded-lg">
+                  <div className="text-2xl font-semibold text-green-500">
+                    {creditData?.lifetimePurchased?.toLocaleString() ?? 0}
+                  </div>
+                  <div className="text-sm text-gray-400 mt-1">Total Purchased</div>
                 </div>
-              </div>
-            </div>
-
-            {/* Subscription Details for Pro Users */}
-            {isPro && subscriptionEndsAt && (
-              <div className="rounded-lg bg-white/5 p-4 mt-4">
-                <div className="flex items-center gap-2 text-sm">
-                  <Calendar className="h-4 w-4 text-gray-400" />
-                  <span className="text-gray-400">Next billing date:</span>
-                  <span className="font-medium text-white">
-                    {subscriptionEndsAt.toLocaleDateString('en-US', {
-                      month: 'long',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })}
-                  </span>
+                <div className="text-center p-4 bg-white/5 rounded-lg">
+                  <div className="text-2xl font-semibold text-blue-500">
+                    {creditData?.lifetimeUsed?.toLocaleString() ?? 0}
+                  </div>
+                  <div className="text-sm text-gray-400 mt-1">Total Used</div>
                 </div>
               </div>
             )}
-
-            {/* Action Buttons */}
-            <div className="flex gap-3 mt-6">
-              {isPro ? (
-                <>
-                  <Button
-                    className="flex-1"
-                    onClick={handleManageSubscription}
-                    disabled={portalMutation.isPending || userLoading}
-                  >
-                    {portalMutation.isPending ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Opening Portal...
-                      </>
-                    ) : (
-                      <>
-                        <CreditCard className="h-4 w-4 mr-2" />
-                        Manage Subscription
-                      </>
-                    )}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    asChild
-                  >
-                    <Link href="/pricing">
-                      <ExternalLink className="h-4 w-4 mr-2" />
-                      View Plans
-                    </Link>
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button
-                    className="flex-1"
-                    onClick={handleUpgrade}
-                    disabled={userLoading}
-                  >
-                    <Sparkles className="h-4 w-4 mr-2" />
-                    Upgrade to Pro
-                  </Button>
-                  <Button
-                    variant="outline"
-                    asChild
-                  >
-                    <Link href="/pricing">
-                      View All Plans
-                    </Link>
-                  </Button>
-                </>
-              )}
-            </div>
           </CardContent>
         </Card>
 
-        {/* Billing Portal Info for Pro Users */}
-        {isPro && (
-          <Card className="bg-white/5 border-white/10">
-            <CardHeader>
-              <CardTitle className="text-white">Manage Your Subscription</CardTitle>
-              <CardDescription className="text-gray-400">
-                Update payment method, view invoices, or cancel subscription
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm text-gray-400">
-              <p>
-                The Stripe Customer Portal allows you to:
-              </p>
-              <ul className="list-disc list-inside space-y-1 ml-2">
-                <li>Update your payment method</li>
-                <li>View and download past invoices</li>
-                <li>Update billing information</li>
-                <li>Cancel your subscription (effective at end of billing period)</li>
-              </ul>
-              <p className="text-xs pt-2">
-                All payment processing is securely handled by Stripe. We never store your
-                payment information on our servers.
-              </p>
-            </CardContent>
-          </Card>
-        )}
+        {/* Credit Packages */}
+        <Card className="bg-white/5 border-white/10">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-white">
+              <CreditCard className="h-5 w-5" />
+              Buy Credit Packs
+            </CardTitle>
+            <CardDescription className="text-gray-400">
+              Choose a pack that fits your needs. Credits never expire.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {packages.map((pkg) => (
+                <div
+                  key={pkg.id}
+                  className={`relative rounded-xl p-5 border transition-all ${
+                    pkg.id === bestValuePackage
+                      ? "bg-gradient-to-br from-blue-600/20 to-purple-600/20 border-blue-500/50"
+                      : "bg-white/5 border-white/10 hover:border-white/20"
+                  }`}
+                >
+                  {pkg.id === bestValuePackage && (
+                    <Badge className="absolute -top-2 left-1/2 -translate-x-1/2 bg-gradient-to-r from-blue-600 to-purple-600 text-white">
+                      <Sparkles className="h-3 w-3 mr-1" />
+                      Best Value
+                    </Badge>
+                  )}
+                  <div className="text-center space-y-3">
+                    <h3 className="font-semibold text-white text-lg">{pkg.name}</h3>
+                    <div>
+                      <span className="text-3xl font-bold text-white">{pkg.credits.toLocaleString()}</span>
+                      <span className="text-gray-400 text-sm ml-1">credits</span>
+                    </div>
+                    <div className="text-2xl font-bold text-white">
+                      ${pkg.priceUsd.toFixed(2)}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      ${pkg.perCredit.toFixed(3)}/credit
+                    </div>
+                    <Button
+                      className={`w-full ${
+                        pkg.id === bestValuePackage
+                          ? "bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                          : ""
+                      }`}
+                      onClick={() => handlePurchase(pkg.id)}
+                      disabled={purchaseMutation.isPending}
+                    >
+                      {purchaseMutation.isPending && selectedPackage === pkg.id ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                          <CreditCard className="h-4 w-4 mr-2" />
+                          Buy Now
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500 mt-4 text-center">
+              Secure payment powered by Stripe. Credits are added instantly after purchase.
+            </p>
+          </CardContent>
+        </Card>
 
-        {/* Free Tier Info */}
-        {!isPro && (
-          <Card className="bg-white/5 border-white/10">
-            <CardHeader>
-              <CardTitle className="text-white">Why Upgrade to Pro?</CardTitle>
-              <CardDescription className="text-gray-400">
-                Unlock unlimited access and premium features
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3 text-sm">
-                <div className="flex items-start gap-2">
-                  <Sparkles className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="font-medium text-white">Unlimited Video Processing</p>
-                    <p className="text-gray-400">
-                      Convert as many videos to shorts as you need
-                    </p>
+        {/* Transaction History */}
+        <Card className="bg-white/5 border-white/10">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-white">
+              <History className="h-5 w-5" />
+              Transaction History
+            </CardTitle>
+            <CardDescription className="text-gray-400">
+              Your recent credit transactions
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {historyLoading ? (
+              <div className="flex items-center gap-2 text-gray-400 py-4">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span>Loading history...</span>
+              </div>
+            ) : transactions.length === 0 ? (
+              <div className="text-center py-8 text-gray-400">
+                <History className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                <p>No transactions yet</p>
+                <p className="text-sm mt-1">Purchase credits to get started</p>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {transactions.slice(0, 20).map((tx) => (
+                  <div
+                    key={tx.id}
+                    className="flex items-center justify-between py-3 px-4 bg-white/5 rounded-lg"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`p-2 rounded-full ${
+                          tx.amount > 0
+                            ? "bg-green-500/20 text-green-500"
+                            : "bg-red-500/20 text-red-500"
+                        }`}
+                      >
+                        {tx.amount > 0 ? (
+                          <TrendingUp className="h-4 w-4" />
+                        ) : (
+                          <Coins className="h-4 w-4" />
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-white">{tx.description}</p>
+                        <p className="text-xs text-gray-500">
+                          {new Date(tx.createdAt).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p
+                        className={`font-semibold ${
+                          tx.amount > 0 ? "text-green-500" : "text-red-500"
+                        }`}
+                      >
+                        {tx.amount > 0 ? "+" : ""}{tx.amount.toLocaleString()}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Balance: {tx.balanceAfter.toLocaleString()}
+                      </p>
+                    </div>
                   </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Feature Pricing Info */}
+        <Card className="bg-white/5 border-white/10">
+          <CardHeader>
+            <CardTitle className="text-white">What Can You Do With Credits?</CardTitle>
+            <CardDescription className="text-gray-400">
+              Credit costs for different features
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid md:grid-cols-2 gap-4 text-sm">
+              <div className="space-y-2">
+                <div className="flex justify-between py-2 border-b border-white/10">
+                  <span className="text-gray-400">UGC Ad (Premium Quality)</span>
+                  <span className="font-medium text-white">70 credits</span>
                 </div>
-                <div className="flex items-start gap-2">
-                  <Sparkles className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="font-medium text-white">Unlimited Social Posting</p>
-                    <p className="text-gray-400">
-                      Post to Instagram, TikTok, and YouTube without limits
-                    </p>
-                  </div>
+                <div className="flex justify-between py-2 border-b border-white/10">
+                  <span className="text-gray-400">UGC Ad (Fast)</span>
+                  <span className="font-medium text-white">35 credits</span>
                 </div>
-                <div className="flex items-start gap-2">
-                  <Sparkles className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="font-medium text-white">Priority Support</p>
-                    <p className="text-gray-400">
-                      Get faster responses and dedicated assistance
-                    </p>
-                  </div>
+                <div className="flex justify-between py-2 border-b border-white/10">
+                  <span className="text-gray-400">UGC Ad (Sora2)</span>
+                  <span className="font-medium text-white">18 credits</span>
                 </div>
-                <div className="flex items-start gap-2">
-                  <Sparkles className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="font-medium text-white">Cancel Anytime</p>
-                    <p className="text-gray-400">
-                      No long-term commitment, cancel whenever you want
-                    </p>
-                  </div>
+                <div className="flex justify-between py-2 border-b border-white/10">
+                  <span className="text-gray-400">Video to Shorts (Full)</span>
+                  <span className="font-medium text-white">100 credits</span>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        )}
+              <div className="space-y-2">
+                <div className="flex justify-between py-2 border-b border-white/10">
+                  <span className="text-gray-400">Video Processing</span>
+                  <span className="font-medium text-white">31 credits</span>
+                </div>
+                <div className="flex justify-between py-2 border-b border-white/10">
+                  <span className="text-gray-400">Social Media Post</span>
+                  <span className="font-medium text-white">11 credits</span>
+                </div>
+                <div className="flex justify-between py-2 border-b border-white/10">
+                  <span className="text-gray-400">AI Image Generation</span>
+                  <span className="font-medium text-white">3-6 credits</span>
+                </div>
+                <div className="flex justify-between py-2 border-b border-white/10">
+                  <span className="text-gray-400">AI Caption</span>
+                  <span className="font-medium text-white">1 credit</span>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

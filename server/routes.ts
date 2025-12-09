@@ -15,6 +15,9 @@ import { ugcChainService } from "./services/ugcChain";
 import { supabaseAdmin } from "./services/supabaseAuth";
 import { sendVideoCompleteNotification } from "./services/resendService";
 import { requireAuth } from "./middleware/auth";
+import { checkCredits, deductCreditsFromRequest } from "./middleware/checkCredits";
+import * as creditService from "./services/creditService";
+// Legacy usage limits - kept for reference during migration, will be removed in Phase 5
 import { checkVideoLimit, checkPostLimit, checkMediaGenerationLimit, incrementVideoUsage, incrementPostUsage, incrementMediaGenerationUsage, getCurrentUsage, FREE_VIDEO_LIMIT, FREE_POST_LIMIT, FREE_MEDIA_GENERATION_LIMIT } from "./services/usageLimits";
 import { db } from "./db";
 import { stripeEvents } from "../shared/schema";
@@ -332,20 +335,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/*", requireAuth);
 
   // POST /api/videos - Create video processing task and start processing
-  app.post("/api/videos", async (req, res) => {
+  app.post("/api/videos", checkCredits('klap_video_input'), async (req, res) => {
     try {
       const { sourceVideoUrl, autoExport } = createVideoSchema.parse(req.body);
-
-      // Check usage limit (Phase 6: Free tier limits)
-      const canCreateVideo = await checkVideoLimit(req.userId!);
-      if (!canCreateVideo) {
-        console.log('[Usage Limits] Video limit reached for user:', req.userId);
-        return res.status(403).json({
-          error: 'Monthly video limit reached',
-          message: 'Free plan allows 3 videos per month. Upgrade to Pro for unlimited videos.',
-          limit: FREE_VIDEO_LIMIT,
-        });
-      }
 
       // Create initial task record
       const klapResponse =
@@ -363,8 +355,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         autoExportStatus: autoExport ? "pending" : null,
       });
 
-      // Increment usage counter (Phase 6: Track video creation)
-      await incrementVideoUsage(req.userId!);
+      // Deduct credits after successful Klap API call (Phase 9: XPAND Credits)
+      await deductCreditsFromRequest(req, { taskId: task.id, type: 'klap_video_input' });
 
       // Start background processing
       processVideoTask(task.id).catch(console.error);
@@ -383,20 +375,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { urls, autoExport } = createBulkVideoSchema.parse(req.body);
 
+      // Phase 9: Check total credits upfront for all videos
+      const costPerVideo = await creditService.getFeatureCost('klap_video_input');
+      const totalCost = costPerVideo * urls.length;
+      const balance = await creditService.getBalance(req.userId!);
+
+      if (balance < totalCost) {
+        return res.status(402).json({
+          error: 'Insufficient credits',
+          message: `This bulk operation requires ${totalCost} credits (${costPerVideo} × ${urls.length} videos), but you only have ${balance}`,
+          required: totalCost,
+          balance,
+          videoCount: urls.length,
+          costPerVideo,
+        });
+      }
+
       const results = await Promise.allSettled(
         urls.map(async (url) => {
           try {
-            // Check usage limit for each video (Phase 6: Free tier limits)
-            const canCreateVideo = await checkVideoLimit(req.userId!);
-            if (!canCreateVideo) {
-              console.log('[Usage Limits] Video limit reached for user (bulk):', req.userId);
-              return {
-                url,
-                success: false,
-                error: 'Monthly video limit reached. Free plan allows 3 videos per month.',
-              };
-            }
-
             const klapResponse = await klapService.createVideoToShortsTask(url);
 
             const task = await storage.createTask({
@@ -411,9 +408,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               autoExportStatus: autoExport ? "pending" : null,
             });
 
-            // Increment usage counter (Phase 6: Track video creation)
-            await incrementVideoUsage(req.userId!);
-            console.log('[Usage Limits] Usage incremented for bulk video:', url);
+            // Deduct credits after successful Klap API call (Phase 9: XPAND Credits)
+            await creditService.deductCredits(req.userId!, 'klap_video_input', { taskId: task.id, type: 'bulk_video' });
+            console.log('[Credits] Deducted for bulk video:', url);
 
             // Start background processing
             processVideoTask(task.id).catch(console.error);
@@ -556,7 +553,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // POST /api/process-video-advanced - Process video with custom parameters
-  app.post("/api/process-video-advanced", requireAuth, async (req, res) => {
+  app.post("/api/process-video-advanced", requireAuth, checkCredits('klap_video_input'), async (req, res) => {
     try {
       const { url, email, targetClipCount, minimumDuration } = processVideoAdvancedSchema.parse(req.body);
 
@@ -566,17 +563,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         targetClipCount,
         minimumDuration
       });
-
-      // Check usage limit (Phase 6: Free tier limits)
-      const canCreateVideo = await checkVideoLimit(req.userId!);
-      if (!canCreateVideo) {
-        console.log('[Usage Limits] Video limit reached for user:', req.userId);
-        return res.status(403).json({
-          error: 'Monthly video limit reached',
-          message: 'Free plan allows 3 videos per month. Upgrade to Pro for unlimited videos.',
-          limit: FREE_VIDEO_LIMIT,
-        });
-      }
 
       // Step 1: Create task via Klap API with custom parameters
       const klapTask = await klapService.createVideoToShortsTask(url, {
@@ -598,9 +584,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         autoExportStatus: "pending",
       });
 
-      // Increment usage counter (Phase 6: Track video creation)
-      await incrementVideoUsage(req.userId!);
-      console.log('[Usage Limits] Usage incremented for process-video-advanced');
+      // Deduct credits after successful Klap API call (Phase 9: XPAND Credits)
+      await deductCreditsFromRequest(req, { taskId: task.id, type: 'process_video_advanced' });
+      console.log('[Credits] Deducted for process-video-advanced');
 
       // Step 3: Start background workflow (follows exact script)
       processCompleteWorkflow(task.id).catch(console.error);
@@ -1073,23 +1059,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // POST /api/process-video - Simple one-click workflow following exact script pattern
-  app.post("/api/process-video", async (req, res) => {
+  app.post("/api/process-video", checkCredits('klap_full_workflow'), async (req, res) => {
     try {
       const { url, email } = z.object({
         url: z.string().url(),
         email: z.string().email().optional()
       }).parse(req.body);
-
-      // Check usage limit (Phase 6: Free tier limits)
-      const canCreateVideo = await checkVideoLimit(req.userId!);
-      if (!canCreateVideo) {
-        console.log('[Usage Limits] Video limit reached for user:', req.userId);
-        return res.status(403).json({
-          error: 'Monthly video limit reached',
-          message: 'Free plan allows 3 videos per month. Upgrade to Pro for unlimited videos.',
-          limit: FREE_VIDEO_LIMIT,
-        });
-      }
 
       // Step 1: Create task via Klap API
       const klapTask = await klapService.createVideoToShortsTask(url);
@@ -1108,9 +1083,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         autoExportStatus: "pending",
       });
 
-      // Increment usage counter (Phase 6: Track video creation)
-      await incrementVideoUsage(req.userId!);
-      console.log('[Usage Limits] Usage incremented for process-video');
+      // Deduct credits after successful Klap API call (Phase 9: XPAND Credits)
+      await deductCreditsFromRequest(req, { taskId: task.id, type: 'process_video_workflow' });
+      console.log('[Credits] Deducted for process-video workflow');
 
       // Step 3: Start background workflow (follows exact script)
       processCompleteWorkflow(task.id).catch(console.error);
@@ -1153,14 +1128,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { projectId, videoUrl, mediaAssetId, platform, caption, scheduledFor } = validation.data;
 
-      // Check usage limit (Phase 6: Free tier limits)
-      const canCreatePost = await checkPostLimit(req.userId!);
-      if (!canCreatePost) {
-        console.log('[Usage Limits] Post limit reached for user:', req.userId);
-        return res.status(403).json({
-          error: 'Monthly post limit reached',
-          message: 'Free plan allows 3 social posts per month. Upgrade to Pro for unlimited posting.',
-          limit: FREE_POST_LIMIT,
+      // Phase 9: Check credits for social post
+      const creditCheck = await creditService.checkCredits(req.userId!, 'social_post');
+      if (!creditCheck.hasEnough) {
+        console.log('[Credits] Insufficient credits for social post:', req.userId);
+        return res.status(402).json({
+          error: 'Insufficient credits',
+          message: `You need ${creditCheck.required} credits for ${creditCheck.featureName}, but only have ${creditCheck.balance}`,
+          required: creditCheck.required,
+          balance: creditCheck.balance,
+          featureKey: 'social_post',
         });
       }
 
@@ -1440,7 +1417,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`[Social Post] Successfully posted to Instagram: ${instagramPost?.platformPostUrl || 'pending'}`);
 
           // Increment usage counter (Phase 6: Track social post creation)
-          await incrementPostUsage(req.userId!);
+          // Deduct credits after successful Late.dev API call (Phase 9: XPAND Credits)
+          await creditService.deductCredits(req.userId!, 'social_post', { postId: socialPost.id, platform });
 
           res.json({
             success: true,
@@ -1611,14 +1589,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Check usage limit (Phase 4: Free tier limits)
-      const canGenerate = await checkMediaGenerationLimit(req.userId!);
-      if (!canGenerate) {
-        console.log('[AI Generate] Media generation limit reached:', req.userId);
-        return res.status(403).json({
-          error: 'Monthly media generation limit reached',
-          message: 'Free plan allows 10 AI generations per month. Upgrade to Pro for unlimited.',
-          limit: FREE_MEDIA_GENERATION_LIMIT,
+      // Phase 9: Determine feature key based on provider/type
+      let featureKey = 'media_flux'; // default
+      if (provider === 'openai') {
+        featureKey = 'media_4o';
+      } else if (provider === 'kie-veo3' && type === 'video') {
+        featureKey = 'media_veo3';
+      } else if (provider === 'kie-sora2' && type === 'video') {
+        featureKey = 'media_sora2';
+      } else if (provider === 'kie-flux' && type === 'image') {
+        featureKey = 'media_flux';
+      }
+
+      // Phase 9: Check credits
+      const creditCheck = await creditService.checkCredits(req.userId!, featureKey);
+      if (!creditCheck.hasEnough) {
+        console.log('[AI Generate] Insufficient credits:', req.userId);
+        return res.status(402).json({
+          error: 'Insufficient credits',
+          message: `You need ${creditCheck.required} credits for ${creditCheck.featureName}, but only have ${creditCheck.balance}`,
+          required: creditCheck.required,
+          balance: creditCheck.balance,
+          featureKey,
         });
       }
 
@@ -1657,8 +1649,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('[AI Generate] Background processing error:', error);
       });
 
-      // Increment usage counter
-      await incrementMediaGenerationUsage(req.userId!);
+      // Deduct credits after starting generation (Phase 9: XPAND Credits)
+      await creditService.deductCredits(req.userId!, featureKey, { assetId, provider, type });
 
       res.json({
         success: true,
@@ -1735,14 +1727,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Check usage limit
-      const canGenerate = await checkMediaGenerationLimit(req.userId!);
-      if (!canGenerate) {
-        console.log('[AI UGC Preset] Media generation limit reached:', req.userId);
-        return res.status(403).json({
-          error: 'Monthly media generation limit reached',
-          message: 'Free plan allows 10 AI generations per month. Upgrade to Pro for unlimited.',
-          limit: FREE_MEDIA_GENERATION_LIMIT,
+      // Phase 9: Determine credit feature key based on generation mode
+      let creditFeatureKey: string;
+      if (generationMode === 'nanobana+veo3') {
+        creditFeatureKey = 'ugc_veo3_quality'; // 70 credits
+      } else if (generationMode === 'veo3-only') {
+        creditFeatureKey = 'ugc_veo3_fast'; // 35 credits
+      } else {
+        creditFeatureKey = 'ugc_sora2'; // 18 credits
+      }
+
+      // Phase 9: Check credits
+      const creditCheck = await creditService.checkCredits(req.userId!, creditFeatureKey);
+      if (!creditCheck.hasEnough) {
+        console.log('[AI UGC Preset] Insufficient credits:', req.userId);
+        return res.status(402).json({
+          error: 'Insufficient credits',
+          message: `You need ${creditCheck.required} credits for ${creditCheck.featureName}, but only have ${creditCheck.balance}`,
+          required: creditCheck.required,
+          balance: creditCheck.balance,
+          featureKey: creditFeatureKey,
         });
       }
 
@@ -1841,8 +1845,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Increment usage counter
-      await incrementMediaGenerationUsage(req.userId!);
+      // Deduct credits after starting generation (Phase 9: XPAND Credits)
+      await creditService.deductCredits(req.userId!, creditFeatureKey, {
+        assetId,
+        generationMode,
+        productName
+      });
 
       res.json({
         success: true,
@@ -1953,13 +1961,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Source image has no result URL" });
       }
 
-      // Check usage limit
-      const canGenerate = await checkMediaGenerationLimit(req.userId!);
-      if (!canGenerate) {
-        return res.status(403).json({
-          error: 'Monthly media generation limit reached',
-          message: 'Free plan allows 10 AI generations per month. Upgrade to Pro for unlimited.',
-          limit: FREE_MEDIA_GENERATION_LIMIT,
+      // Phase 9: Check credits for video generation from image
+      const creditCheck = await creditService.checkCredits(req.userId!, 'media_veo3');
+      if (!creditCheck.hasEnough) {
+        return res.status(402).json({
+          error: 'Insufficient credits',
+          message: `You need ${creditCheck.required} credits for ${creditCheck.featureName}, but only have ${creditCheck.balance}`,
+          required: creditCheck.required,
+          balance: creditCheck.balance,
+          featureKey: 'media_veo3',
         });
       }
 
@@ -1998,6 +2008,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         options: null,
       }).catch((err) => {
         console.error(`[AI Use For Video] Background generation failed for ${assetId}:`, err);
+      });
+
+      // Deduct credits after starting generation (Phase 9: XPAND Credits)
+      await creditService.deductCredits(req.userId!, 'media_veo3', {
+        assetId,
+        sourceAssetId,
+        type: 'image_to_video'
       });
 
       res.json({
@@ -2552,7 +2569,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // POST /api/caption/generate - Generate AI caption for a specific project
-  app.post("/api/caption/generate", requireAuth, async (req, res) => {
+  app.post("/api/caption/generate", requireAuth, checkCredits('caption_generate'), async (req, res) => {
     try {
       const { generateCaptionSchema } = await import("./validators/caption.js");
       const validation = generateCaptionSchema.safeParse(req.body);
@@ -2594,6 +2611,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userSystemPrompt: user.captionSystemPrompt || undefined,
       });
 
+      // Deduct credits after successful caption generation (Phase 9: XPAND Credits)
+      await deductCreditsFromRequest(req, { projectId, type: 'caption' });
+
       res.json({
         success: true,
         caption: result.caption,
@@ -2605,6 +2625,282 @@ export async function registerRoutes(app: Express): Promise<Server> {
         error: "Failed to generate caption",
         details: error.message,
       });
+    }
+  });
+
+  // ========================================
+  // XPAND CREDITS API ENDPOINTS (Phase 9)
+  // ========================================
+
+  // GET /api/credits - Get user's current credit balance and stats
+  app.get('/api/credits', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+
+      // Get or initialize user credits
+      let credits = await creditService.getUserCredits(userId);
+      if (!credits) {
+        credits = await creditService.initializeUserCredits(userId);
+      }
+
+      res.json({
+        balance: credits.balance,
+        lifetimePurchased: credits.lifetimePurchased,
+        lifetimeUsed: credits.lifetimeUsed,
+      });
+    } catch (error: any) {
+      console.error('[Credits] Error fetching balance:', error);
+      res.status(500).json({ error: 'Failed to fetch credit balance', details: error.message });
+    }
+  });
+
+  // GET /api/credits/history - Get user's credit transaction history
+  app.get('/api/credits/history', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+      const limit = parseInt(req.query.limit as string) || 50;
+
+      const transactions = await creditService.getTransactionHistory(userId, limit);
+
+      res.json({ transactions });
+    } catch (error: any) {
+      console.error('[Credits] Error fetching history:', error);
+      res.status(500).json({ error: 'Failed to fetch transaction history', details: error.message });
+    }
+  });
+
+  // GET /api/credits/packages - Get available credit packages for purchase
+  app.get('/api/credits/packages', async (req, res) => {
+    res.json({ packages: creditService.CREDIT_PACKAGES });
+  });
+
+  // POST /api/credits/purchase - Create Stripe checkout session for credit purchase
+  app.post('/api/credits/purchase', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+      const { packageId } = req.body;
+
+      if (!packageId) {
+        return res.status(400).json({ error: 'packageId is required' });
+      }
+
+      // Validate package exists
+      const creditPackage = creditService.getCreditPackage(packageId);
+      if (!creditPackage) {
+        return res.status(400).json({
+          error: 'Invalid package',
+          validPackages: creditService.CREDIT_PACKAGES.map(p => p.id),
+        });
+      }
+
+      // Get user email
+      const user = await storage.getUser(userId);
+      if (!user || !user.email) {
+        return res.status(404).json({ error: 'User not found or missing email' });
+      }
+
+      // Build success/cancel URLs
+      const origin = req.headers.origin || req.headers.referer?.split('/').slice(0, 3).join('/');
+      const frontendUrl = process.env.FRONTEND_URL || origin || 'http://localhost:5000';
+      const successUrl = `${frontendUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`;
+      const cancelUrl = `${frontendUrl}/settings/billing`;
+
+      console.log('[Credits Purchase] Creating checkout:', {
+        userId,
+        packageId,
+        credits: creditPackage.credits,
+        priceUsd: creditPackage.priceUsd,
+      });
+
+      // Create Stripe checkout session
+      const session = await stripeService.createCreditCheckoutSession({
+        userId,
+        userEmail: user.email,
+        packageId,
+        successUrl,
+        cancelUrl,
+      });
+
+      res.json({
+        success: true,
+        sessionId: session.sessionId,
+        url: session.url,
+        package: {
+          id: creditPackage.id,
+          name: creditPackage.name,
+          credits: creditPackage.credits,
+          priceUsd: creditPackage.priceUsd,
+        },
+      });
+    } catch (error: any) {
+      console.error('[Credits Purchase] Error:', error);
+      res.status(500).json({
+        error: 'Failed to create checkout session',
+        details: error.message,
+      });
+    }
+  });
+
+  // GET /api/credits/pricing - Get feature credit costs
+  app.get('/api/credits/pricing', async (req, res) => {
+    try {
+      const pricing = await creditService.getAllPricing();
+      res.json({ pricing });
+    } catch (error: any) {
+      console.error('[Credits] Error fetching pricing:', error);
+      res.status(500).json({ error: 'Failed to fetch pricing', details: error.message });
+    }
+  });
+
+  // ========================================
+  // ADMIN CREDITS API ENDPOINTS (Phase 9)
+  // ========================================
+
+  // Helper: Check if user is admin
+  const isAdmin = (email: string | null | undefined): boolean => {
+    const adminEmails = process.env.ADMIN_EMAILS?.split(',').map(e => e.trim().toLowerCase()) || [];
+    return email ? adminEmails.includes(email.toLowerCase()) : false;
+  };
+
+  // Admin middleware
+  const requireAdmin = async (req: any, res: any, next: any) => {
+    try {
+      const userId = req.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user || !isAdmin(user.email)) {
+        return res.status(403).json({ error: 'Forbidden: Admin access required' });
+      }
+
+      next();
+    } catch (error) {
+      console.error('[Admin Auth] Error:', error);
+      res.status(500).json({ error: 'Admin authentication failed' });
+    }
+  };
+
+  // GET /api/admin/credits/pricing - Get all feature pricing (admin)
+  app.get('/api/admin/credits/pricing', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const pricing = await creditService.getAllPricing();
+      res.json({ pricing });
+    } catch (error: any) {
+      console.error('[Admin] Error fetching pricing:', error);
+      res.status(500).json({ error: 'Failed to fetch pricing', details: error.message });
+    }
+  });
+
+  // PUT /api/admin/credits/pricing/:featureKey - Update feature pricing (admin)
+  app.put('/api/admin/credits/pricing/:featureKey', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { featureKey } = req.params;
+      const { creditCost, baseCostUsd, isActive } = req.body;
+
+      const updated = await creditService.updateFeaturePricing(featureKey, {
+        creditCost,
+        baseCostUsd,
+        isActive,
+      });
+
+      if (!updated) {
+        return res.status(404).json({ error: 'Feature not found' });
+      }
+
+      res.json({ success: true, pricing: updated });
+    } catch (error: any) {
+      console.error('[Admin] Error updating pricing:', error);
+      res.status(500).json({ error: 'Failed to update pricing', details: error.message });
+    }
+  });
+
+  // GET /api/admin/credits/settings - Get global credit settings (admin)
+  app.get('/api/admin/credits/settings', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const settings = await creditService.getGlobalSettings();
+      res.json({ settings });
+    } catch (error: any) {
+      console.error('[Admin] Error fetching settings:', error);
+      res.status(500).json({ error: 'Failed to fetch settings', details: error.message });
+    }
+  });
+
+  // PUT /api/admin/credits/settings - Update global credit settings (admin)
+  app.put('/api/admin/credits/settings', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { markupFactor, pricePerCreditUsd } = req.body;
+
+      if (markupFactor === undefined || pricePerCreditUsd === undefined) {
+        return res.status(400).json({ error: 'markupFactor and pricePerCreditUsd are required' });
+      }
+
+      const settings = await creditService.updateGlobalSettings(markupFactor, pricePerCreditUsd);
+      res.json({ success: true, settings });
+    } catch (error: any) {
+      console.error('[Admin] Error updating settings:', error);
+      res.status(500).json({ error: 'Failed to update settings', details: error.message });
+    }
+  });
+
+  // POST /api/admin/credits/:userId - Add credits to a user (admin)
+  app.post('/api/admin/credits/:userId', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const { amount, reason } = req.body;
+
+      if (!amount || typeof amount !== 'number' || amount <= 0) {
+        return res.status(400).json({ error: 'Valid positive amount is required' });
+      }
+
+      if (!reason || typeof reason !== 'string') {
+        return res.status(400).json({ error: 'Reason is required' });
+      }
+
+      // Verify target user exists
+      const targetUser = await storage.getUser(userId);
+      if (!targetUser) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const transaction = await creditService.adminAddCredits(userId, amount, reason);
+      const balance = await creditService.getBalance(userId);
+
+      res.json({
+        success: true,
+        transaction,
+        newBalance: balance,
+      });
+    } catch (error: any) {
+      console.error('[Admin] Error adding credits:', error);
+      res.status(500).json({ error: 'Failed to add credits', details: error.message });
+    }
+  });
+
+  // GET /api/admin/credits/:userId/history - Get user's credit history (admin)
+  app.get('/api/admin/credits/:userId/history', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const limit = parseInt(req.query.limit as string) || 100;
+
+      // Verify target user exists
+      const targetUser = await storage.getUser(userId);
+      if (!targetUser) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const transactions = await creditService.getTransactionHistory(userId, limit);
+      const credits = await creditService.getUserCredits(userId);
+
+      res.json({
+        user: { id: targetUser.id, email: targetUser.email, fullName: targetUser.fullName },
+        balance: credits?.balance ?? 0,
+        transactions,
+      });
+    } catch (error: any) {
+      console.error('[Admin] Error fetching user history:', error);
+      res.status(500).json({ error: 'Failed to fetch user history', details: error.message });
     }
   });
 
@@ -2818,7 +3114,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 // ========================================
 
 /**
- * Handle successful checkout - upgrade user to Pro
+ * Handle successful checkout - grant credits (Phase 9: XPAND Credits)
  */
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   const userId = session.client_reference_id;
@@ -2828,20 +3124,62 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     return;
   }
 
+  // Check if this is a credit purchase (Phase 9)
+  const metadata = session.metadata || {};
+  const isCreditPurchase = metadata.type === 'credit_purchase';
+
   console.log('[Stripe Webhook] Checkout completed:', {
     userId,
     customerId: session.customer,
-    subscriptionId: session.subscription,
+    isCreditPurchase,
+    metadata,
   });
 
-  // Update user with Stripe Customer ID and Pro status
-  await storage.updateUser(userId, {
-    stripeCustomerId: session.customer as string,
-    subscriptionStatus: 'pro',
-    subscriptionEndsAt: null, // Active subscription, no end date yet
-  });
+  if (isCreditPurchase) {
+    // Phase 9: Grant credits to user
+    const credits = parseInt(metadata.credits || '0', 10);
+    const packageId = metadata.packageId;
 
-  console.log('[Stripe Webhook] User upgraded to Pro:', userId);
+    if (credits <= 0) {
+      console.error('[Stripe Webhook] Invalid credit amount in metadata:', metadata);
+      return;
+    }
+
+    // Add credits to user
+    const transaction = await creditService.addCredits(
+      userId,
+      credits,
+      `Purchased ${packageId} credit pack`,
+      session.id,
+      { packageId, stripeSessionId: session.id }
+    );
+
+    // Update user's Stripe customer ID if not set
+    if (session.customer) {
+      await storage.updateUser(userId, {
+        stripeCustomerId: session.customer as string,
+      });
+    }
+
+    console.log('[Stripe Webhook] Credits granted:', {
+      userId,
+      credits,
+      packageId,
+      transactionId: transaction.id,
+      newBalance: transaction.balanceAfter,
+    });
+  } else {
+    // Legacy: Subscription checkout (kept for backwards compatibility)
+    console.log('[Stripe Webhook] Legacy subscription checkout detected');
+
+    await storage.updateUser(userId, {
+      stripeCustomerId: session.customer as string,
+      subscriptionStatus: 'pro',
+      subscriptionEndsAt: null,
+    });
+
+    console.log('[Stripe Webhook] User upgraded to Pro (legacy):', userId);
+  }
 }
 
 /**

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, jsonb, uuid } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, jsonb, uuid, numeric, boolean } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -140,6 +140,59 @@ export const stripeEvents = pgTable("stripe_events", {
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
 });
 
+// ============================================
+// XPAND CREDITS SYSTEM (Phase 9)
+// ============================================
+
+// Global Credit Settings - stores markup factor and price per credit
+export const globalCreditSettings = pgTable("global_credit_settings", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  markupFactor: numeric("markup_factor", { precision: 5, scale: 2 }).notNull().default("1.40"), // 40% markup
+  pricePerCreditUsd: numeric("price_per_credit_usd", { precision: 10, scale: 4 }).notNull().default("0.0200"), // $0.02 per credit
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+});
+
+// Credit Pricing - defines credit cost per feature
+export const creditPricing = pgTable("credit_pricing", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  featureKey: text("feature_key").notNull().unique(), // e.g., 'ugc_veo3_quality', 'klap_video_input'
+  featureName: text("feature_name").notNull(), // Display name for UI
+  baseCostUsd: numeric("base_cost_usd", { precision: 10, scale: 4 }).notNull(), // Your actual cost
+  creditCost: integer("credit_cost").notNull(), // Credits to charge user
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+});
+
+// User Credits - tracks credit balance per user
+export const userCredits = pgTable("user_credits", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }).unique(),
+  balance: integer("balance").notNull().default(0),
+  lifetimePurchased: integer("lifetime_purchased").notNull().default(0),
+  lifetimeUsed: integer("lifetime_used").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+});
+
+// Credit Transactions - audit log of all credit changes
+export const creditTransactions = pgTable("credit_transactions", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  amount: integer("amount").notNull(), // positive = add, negative = deduct
+  balanceAfter: integer("balance_after").notNull(),
+  featureKey: text("feature_key"), // null for purchases
+  description: text("description").notNull(),
+  stripePaymentId: text("stripe_payment_id"), // null for deductions
+  metadata: jsonb("metadata"), // additional info (e.g., asset IDs, etc.)
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+});
+
+// ============================================
+// END XPAND CREDITS SYSTEM
+// ============================================
+
 // Media Assets table - tracks AI-generated media (Phase 4)
 export const mediaAssets = pgTable("media_assets", {
   id: text("id").primaryKey(),
@@ -242,6 +295,21 @@ export const mediaAssetsRelations = relations(mediaAssets, ({ one }) => ({
   }),
 }));
 
+// Credit system relations
+export const userCreditsRelations = relations(userCredits, ({ one }) => ({
+  user: one(users, {
+    fields: [userCredits.userId],
+    references: [users.id],
+  }),
+}));
+
+export const creditTransactionsRelations = relations(creditTransactions, ({ one }) => ({
+  user: one(users, {
+    fields: [creditTransactions.userId],
+    references: [users.id],
+  }),
+}));
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users);
 export const insertTaskSchema = createInsertSchema(tasks, {
@@ -302,6 +370,41 @@ export const insertMediaAssetSchema = createInsertSchema(mediaAssets, {
   updatedAt: true,
 });
 
+// Credit system insert schemas
+export const insertGlobalCreditSettingsSchema = createInsertSchema(globalCreditSettings, {
+  createdAt: () => z.date().optional(),
+  updatedAt: () => z.date().optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertCreditPricingSchema = createInsertSchema(creditPricing, {
+  createdAt: () => z.date().optional(),
+  updatedAt: () => z.date().optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertUserCreditsSchema = createInsertSchema(userCredits, {
+  createdAt: () => z.date().optional(),
+  updatedAt: () => z.date().optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertCreditTransactionSchema = createInsertSchema(creditTransactions, {
+  createdAt: () => z.date().optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -332,3 +435,16 @@ export type InsertStripeEvent = z.infer<typeof insertStripeEventSchema>;
 
 export type MediaAsset = typeof mediaAssets.$inferSelect;
 export type InsertMediaAsset = z.infer<typeof insertMediaAssetSchema>;
+
+// Credit system types
+export type GlobalCreditSettings = typeof globalCreditSettings.$inferSelect;
+export type InsertGlobalCreditSettings = z.infer<typeof insertGlobalCreditSettingsSchema>;
+
+export type CreditPricing = typeof creditPricing.$inferSelect;
+export type InsertCreditPricing = z.infer<typeof insertCreditPricingSchema>;
+
+export type UserCredits = typeof userCredits.$inferSelect;
+export type InsertUserCredits = z.infer<typeof insertUserCreditsSchema>;
+
+export type CreditTransaction = typeof creditTransactions.$inferSelect;
+export type InsertCreditTransaction = z.infer<typeof insertCreditTransactionSchema>;

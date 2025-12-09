@@ -1,5 +1,12 @@
+/**
+ * SuccessPage (Phase 9: XPAND Credits)
+ *
+ * Shown after successful credit purchase via Stripe
+ */
+
 import { useEffect, useState } from "react";
 import { useLocation, Link } from "wouter";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   CardContent,
@@ -8,11 +15,30 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, Home, Settings, Sparkles } from "lucide-react";
+import { CheckCircle2, Home, Settings, Coins, Loader2 } from "lucide-react";
+
+interface CreditBalanceData {
+  balance: number;
+  lifetimePurchased: number;
+  lifetimeUsed: number;
+}
 
 export default function SuccessPage() {
   const [, setLocation] = useLocation();
-  const [countdown, setCountdown] = useState(5);
+  const [countdown, setCountdown] = useState(8);
+  const queryClient = useQueryClient();
+
+  // Fetch updated credit balance
+  const { data: creditData, isLoading } = useQuery<CreditBalanceData>({
+    queryKey: ["/api/credits"],
+    refetchInterval: 2000, // Poll every 2 seconds to catch webhook update
+  });
+
+  // Invalidate and refetch credits on mount
+  useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: ["/api/credits"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/credits/history"] });
+  }, [queryClient]);
 
   useEffect(() => {
     // Start countdown timer
@@ -40,36 +66,53 @@ export default function SuccessPage() {
             </div>
             <CardTitle className="text-3xl mb-2">Payment Successful!</CardTitle>
             <CardDescription className="text-lg">
-              Welcome to Streamline Pro
+              Your credits have been added to your account
             </CardDescription>
           </CardHeader>
 
           <CardContent className="space-y-6">
+            {/* Credit Balance Display */}
+            <div className="rounded-lg bg-gradient-to-br from-yellow-500/10 to-orange-500/10 border border-yellow-500/30 p-6">
+              <div className="flex items-center justify-center gap-3">
+                <Coins className="h-8 w-8 text-yellow-500" />
+                <div className="text-center">
+                  <p className="text-sm text-muted-foreground">Your New Balance</p>
+                  {isLoading ? (
+                    <div className="flex items-center justify-center gap-2">
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      <span>Loading...</span>
+                    </div>
+                  ) : (
+                    <p className="text-4xl font-bold text-yellow-500">
+                      {creditData?.balance?.toLocaleString() ?? "..."} credits
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* What's Next */}
             <div className="rounded-lg bg-muted p-6">
               <h3 className="font-semibold mb-3 flex items-center gap-2">
-                <Sparkles className="h-5 w-5 text-primary" />
-                Your Pro Benefits
+                <Coins className="h-5 w-5 text-primary" />
+                What Can You Do Now?
               </h3>
               <ul className="space-y-2 text-sm text-muted-foreground">
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
-                  Unlimited video conversions
+                  Generate AI-powered UGC ads for your products
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
-                  Unlimited social media posts
+                  Convert long videos into viral shorts
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
-                  AI-powered clip selection
+                  Post directly to Instagram, TikTok & YouTube
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
-                  Auto-export to Instagram, TikTok & YouTube
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
-                  Priority support
+                  Generate AI images and captions
                 </li>
               </ul>
             </div>
@@ -87,7 +130,7 @@ export default function SuccessPage() {
               >
                 <Link href="/">
                   <Home className="h-4 w-4 mr-2" />
-                  Go to Home
+                  Start Creating
                 </Link>
               </Button>
               <Button
@@ -104,10 +147,9 @@ export default function SuccessPage() {
 
             <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-4">
               <p className="text-sm text-center">
-                <strong className="text-blue-600 dark:text-blue-400">Next steps:</strong>{" "}
+                <strong className="text-blue-600 dark:text-blue-400">Pro tip:</strong>{" "}
                 <span className="text-muted-foreground">
-                  Start creating unlimited viral shorts and posting to your social media accounts.
-                  Need help? Check out the settings page to manage your subscription.
+                  Credits never expire! Use them at your own pace to create amazing content.
                 </span>
               </p>
             </div>
