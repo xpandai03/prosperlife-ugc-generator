@@ -129,7 +129,7 @@ export default function BillingSettingsPage() {
         </div>
 
         {/* Credit Balance Card */}
-        <Card className="bg-gradient-to-br from-yellow-500/10 to-orange-500/10 border-yellow-500/30">
+        <Card className="bg-white/5 border-white/10">
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
