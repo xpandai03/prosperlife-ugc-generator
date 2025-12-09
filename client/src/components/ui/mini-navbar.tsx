@@ -61,8 +61,8 @@ export function Navbar() {
   const navLinksData = [
     { label: 'My Clips', href: '/videos' },
     { label: 'UGC Ads', href: '/ai-studio' },
+    { label: 'Schedule', href: '/schedule' },
     { label: 'Socials', href: '/socials' },
-    { label: 'Pricing', href: '/pricing' },
     { label: 'Settings', href: '/settings/billing' },
   ];
 

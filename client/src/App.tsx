@@ -15,8 +15,9 @@ import SocialAccountsPage from "@/pages/settings/SocialAccountsPage";
 import BillingSettingsPage from "@/pages/settings/BillingSettingsPage";
 import CaptionSettingsPage from "@/pages/settings/CaptionSettingsPage";
 import OAuthCallbackPage from "@/pages/OAuthCallbackPage";
-import PricingPage from "@/pages/PricingPage";
+// import PricingPage from "@/pages/PricingPage"; // Hidden - credits system replaces subscription pricing
 import AIStudioPage from "@/pages/AIStudioPage";
+import ScheduleDashboard from "@/pages/ScheduleDashboard";
 import BillingSuccessPage from "@/pages/billing/SuccessPage";
 import BillingCancelPage from "@/pages/billing/CancelPage";
 import PreLoginPage from "@/pages/PreLoginPage";
@@ -41,8 +42,11 @@ function Router() {
         {/* OAuth callback - public */}
         <Route path="/oauth-callback" component={OAuthCallbackPage} />
 
-        {/* Pricing & Billing routes - public (pricing page handles auth internally) */}
-        <Route path="/pricing" component={PricingPage} />
+        {/* Pricing & Billing routes */}
+        {/* Pricing page hidden - redirects to billing settings (credits system) */}
+        <Route path="/pricing">
+          <Redirect to="/settings/billing" />
+        </Route>
         <Route path="/billing/success" component={BillingSuccessPage} />
         <Route path="/billing/cancel" component={BillingCancelPage} />
 
@@ -60,6 +64,11 @@ function Router() {
         <Route path="/ai-studio">
           <ProtectedRoute>
             <AIStudioPage />
+          </ProtectedRoute>
+        </Route>
+        <Route path="/schedule">
+          <ProtectedRoute>
+            <ScheduleDashboard />
           </ProtectedRoute>
         </Route>
         <Route path="/details/:id">
