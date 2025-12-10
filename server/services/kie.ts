@@ -2,9 +2,14 @@
  * KIE.ai Media Generation Service
  *
  * Supports:
- * - Veo3 video generation (8s max)
+ * - Veo3 video generation (duration in seconds, 6-20s)
+ * - Sora2 video generation (n_frames: "10", "15", or "25")
  * - 4O Image generation
  * - Flux Kontext image generation
+ *
+ * IMPORTANT - Model-specific duration handling:
+ * - Veo3: Uses `duration` field (numeric, in seconds)
+ * - Sora2: Uses `n_frames` field (string, only "10", "15", or "25" allowed)
  *
  * Documentation: https://docs.kie.ai/
  */
@@ -18,6 +23,47 @@ const KIE_UPLOAD_URL = 'https://kieai.redpandaai.co';
 
 if (!KIE_API_KEY) {
   console.warn('[KIE Service] Warning: KIE_API_KEY not configured');
+}
+
+/**
+ * Sora2 allowed n_frames values (per KIE API docs)
+ * Only these string values are accepted: "10", "15", "25"
+ */
+const SORA2_ALLOWED_FRAMES = ['10', '15', '25'] as const;
+type Sora2FrameValue = typeof SORA2_ALLOWED_FRAMES[number];
+
+/**
+ * Map a duration (in seconds) to a valid Sora2 n_frames value
+ *
+ * Rules:
+ * - 6-12 seconds → "10"
+ * - 13-19 seconds → "15"
+ * - 20-25 seconds → "25"
+ *
+ * Returns the closest valid n_frames value
+ */
+function mapDurationToSora2Frames(duration: number): Sora2FrameValue {
+  if (duration <= 12) {
+    return '10';
+  } else if (duration <= 19) {
+    return '15';
+  } else {
+    return '25';
+  }
+}
+
+/**
+ * Validate that a duration is within Sora2's supported range
+ * Sora2 supports 10s, 15s, or 25s videos
+ */
+function validateSora2Duration(duration: number): { valid: boolean; message?: string } {
+  if (duration < 6 || duration > 25) {
+    return {
+      valid: false,
+      message: `Selected duration (${duration}s) is out of Sora2's supported range (6-25 seconds).`
+    };
+  }
+  return { valid: true };
 }
 
 /**
@@ -287,6 +333,16 @@ export const kieService = {
       // Duration in seconds (default to 10)
       const durationValue = params.duration || 10;
 
+      // ✅ CRITICAL FIX: Validate duration for Sora2
+      const validation = validateSora2Duration(durationValue);
+      if (!validation.valid) {
+        throw new Error(validation.message);
+      }
+
+      // ✅ CRITICAL FIX: Map duration to valid n_frames value
+      // Sora2 only accepts "10", "15", or "25" - NOT arbitrary duration values
+      const nFramesValue = mapDurationToSora2Frames(durationValue);
+
       // Determine which Sora2 model to use
       const soraModel = publicImageUrls && publicImageUrls.length > 0
         ? 'sora-2-image-to-video'  // Image-to-video
@@ -298,12 +354,14 @@ export const kieService = {
       const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || 'http://localhost:5000';
       const callBackUrl = `${baseUrl}/api/kie/sora2/callback`;
 
+      // ✅ CRITICAL: Sora2 uses n_frames (string), NOT duration
+      // n_frames must be one of: "10", "15", "25"
       requestBody = {
         model: soraModel,
         callBackUrl,  // Include callback URL for async updates
         input: {
           prompt: params.prompt,  // Add prompt field for non-Storyboard models
-          n_frames: durationValue.toString(), // KIE expects string for n_frames
+          n_frames: nFramesValue, // ✅ FIX: Use mapped n_frames value, not raw duration
           aspect_ratio: aspectRatioValue,
           ...(publicImageUrls && publicImageUrls.length > 0 && { image_urls: publicImageUrls }),
         }
@@ -313,22 +371,25 @@ export const kieService = {
         model: soraModel,
         prompt: params.prompt.substring(0, 50) + '...',
         aspectRatio: aspectRatioValue,
-        duration: durationValue + 's',
+        requestedDuration: durationValue + 's',
+        mappedNFrames: nFramesValue, // ✅ Show the mapped value
         callBackUrl,
         imageUrls: publicImageUrls?.map(url => url.substring(0, 60) + '...'),
       });
     } else {
-      // Veo3 endpoint (existing)
+      // Veo3 endpoint
       endpoint = `${KIE_BASE_URL}/api/v1/veo/generate`;
 
       // Duration in seconds for Veo3 (default to 10)
       const durationValue = params.duration || 10;
 
+      // ✅ CRITICAL: Veo3 uses `duration` (numeric), NOT n_frames
+      // Do NOT include n_frames field for Veo3 - it will cause API errors
       requestBody = {
         prompt: params.prompt,
         model: model,
         aspectRatio: params.aspectRatio || '16:9',
-        duration: durationValue, // Veo3 accepts numeric duration
+        duration: durationValue, // ✅ Veo3 accepts numeric duration (6-20 seconds)
         ...(publicImageUrls && { imageUrls: publicImageUrls }),
       };
 
