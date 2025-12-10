@@ -592,4 +592,75 @@ export const lateService = {
 
     return connectedAccount;
   },
+
+  /**
+   * Get analytics data from Late.dev
+   *
+   * Fetches post performance metrics including views, likes, comments, shares, etc.
+   *
+   * @param options - Query parameters for filtering analytics
+   * @returns Analytics data with overview and per-post metrics
+   */
+  async getAnalytics(options: {
+    profileId?: string;
+    platform?: string;
+    fromDate?: string;
+    toDate?: string;
+    limit?: number;
+    page?: number;
+    sortBy?: 'date' | 'engagement';
+    order?: 'asc' | 'desc';
+  } = {}): Promise<any> {
+    if (!LATE_API_KEY) {
+      throw new Error('LATE_API_KEY is not configured');
+    }
+
+    // Build query string from options
+    const params = new URLSearchParams();
+    if (options.profileId) params.append('profileId', options.profileId);
+    if (options.platform) params.append('platform', options.platform);
+    if (options.fromDate) params.append('fromDate', options.fromDate);
+    if (options.toDate) params.append('toDate', options.toDate);
+    if (options.limit) params.append('limit', options.limit.toString());
+    if (options.page) params.append('page', options.page.toString());
+    if (options.sortBy) params.append('sortBy', options.sortBy);
+    if (options.order) params.append('order', options.order);
+
+    const queryString = params.toString();
+    const url = `${LATE_BASE_URL}/analytics${queryString ? `?${queryString}` : ''}`;
+
+    console.log('[Late Service] Fetching analytics:', { url, options });
+
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${LATE_API_KEY}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[Late Service] Analytics fetch error:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorText,
+        });
+        throw new Error(`Late API Error (${response.status}): ${errorText}`);
+      }
+
+      const data = await response.json();
+
+      console.log('[Late Service] Analytics fetched:', {
+        totalPosts: data.overview?.totalPosts,
+        publishedPosts: data.overview?.publishedPosts,
+        postsReturned: data.posts?.length || 0,
+      });
+
+      return data;
+    } catch (error) {
+      console.error('[Late Service] Error fetching analytics:', error);
+      throw error;
+    }
+  },
 };

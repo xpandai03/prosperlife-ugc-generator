@@ -20,8 +20,8 @@ import * as creditService from "./services/creditService";
 // Legacy usage limits - kept for reference during migration, will be removed in Phase 5
 import { checkVideoLimit, checkPostLimit, checkMediaGenerationLimit, incrementVideoUsage, incrementPostUsage, incrementMediaGenerationUsage, getCurrentUsage, FREE_VIDEO_LIMIT, FREE_POST_LIMIT, FREE_MEDIA_GENERATION_LIMIT } from "./services/usageLimits";
 import { db } from "./db";
-import { stripeEvents } from "../shared/schema";
-import { eq, and } from "drizzle-orm";
+import { stripeEvents, users, socialPosts } from "../shared/schema";
+import { eq, and, desc } from "drizzle-orm";
 import { z } from "zod";
 import type Stripe from "stripe";
 import { v4 as uuidv4 } from "uuid";
@@ -1516,6 +1516,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("[Social Post] Error fetching social posts:", error);
       res.status(500).json({
         error: "Failed to fetch social posts",
+        details: error.message,
+      });
+    }
+  });
+
+  // GET /api/analytics/posts - Get post analytics from Late.dev API
+  app.get("/api/analytics/posts", requireAuth, async (req, res) => {
+    try {
+      console.log(`[Analytics] Fetching analytics for user ${req.userId}`);
+
+      // Get user's Late.dev profile to filter analytics
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, req.userId as string),
+      });
+
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Fetch analytics from Late.dev API
+      const analyticsData = await lateService.getAnalytics({
+        profileId: user.lateProfileId || undefined,
+        platform: 'instagram', // Filter to Instagram for now
+        limit: 50,
+        sortBy: 'date',
+        order: 'desc',
+      });
+
+      // Transform Late.dev response to match our frontend interface
+      const posts = (analyticsData.posts || []).map((post: any) => ({
+        id: post.postId || post._id,
+        thumbnailUrl: post.mediaItems?.[0]?.thumbnailUrl || post.thumbnailUrl || null,
+        caption: post.content || '',
+        createdAt: post.publishedAt || post.createdAt,
+        platformPostUrl: post.platformPostUrl || null,
+        platform: post.platform || 'instagram',
+        metrics: {
+          views: post.analytics?.views || 0,
+          likes: post.analytics?.likes || 0,
+          comments: post.analytics?.comments || 0,
+          shares: post.analytics?.shares || 0,
+          impressions: post.analytics?.impressions || 0,
+          reach: post.analytics?.reach || 0,
+          clicks: post.analytics?.clicks || 0,
+        },
+      }));
+
+      // Calculate summary totals
+      const summary = posts.reduce(
+        (acc: any, post: any) => ({
+          views: acc.views + post.metrics.views,
+          impressions: acc.impressions + post.metrics.impressions,
+          reach: acc.reach + post.metrics.reach,
+          likes: acc.likes + post.metrics.likes,
+          comments: acc.comments + post.metrics.comments,
+          shares: acc.shares + post.metrics.shares,
+        }),
+        { views: 0, impressions: 0, reach: 0, likes: 0, comments: 0, shares: 0 }
+      );
+
+      console.log(`[Analytics] Returning ${posts.length} posts with summary metrics`);
+
+      res.json({
+        summary,
+        posts,
+      });
+    } catch (error: any) {
+      console.error("[Analytics] Error fetching analytics:", error);
+      res.status(500).json({
+        error: "Failed to fetch analytics",
         details: error.message,
       });
     }
