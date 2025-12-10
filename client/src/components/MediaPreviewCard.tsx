@@ -69,10 +69,11 @@ export function MediaPreviewCard({ asset, onClick }: MediaPreviewCardProps) {
   const [showPostModal, setShowPostModal] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false); // For fade-out animation
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Delete mutation
+  // Delete mutation with optimistic fade-out
   const deleteMutation = useMutation({
     mutationFn: async (assetId: string) => {
       const authHeaders = await getAuthHeaders();
@@ -92,15 +93,23 @@ export function MediaPreviewCard({ asset, onClick }: MediaPreviewCardProps) {
 
       return await response.json();
     },
+    onMutate: () => {
+      // Start fade-out animation immediately (optimistic)
+      setIsDeleting(true);
+    },
     onSuccess: () => {
-      // Invalidate gallery to refresh
-      queryClient.invalidateQueries({ queryKey: ['/api/ai/media'] });
+      // After fade animation completes, refresh the gallery
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['/api/ai/media'] });
+      }, 300); // Match animation duration
       toast({
         title: 'Deleted',
         description: 'UGC ad removed from your gallery',
       });
     },
     onError: (error: Error) => {
+      // Revert fade-out if delete failed
+      setIsDeleting(false);
       toast({
         title: 'Delete failed',
         description: error.message,
@@ -225,9 +234,16 @@ export function MediaPreviewCard({ asset, onClick }: MediaPreviewCardProps) {
     }
   };
 
+  // Don't render if fully deleted (after animation)
+  if (isDeleting && deleteMutation.isSuccess) {
+    return null;
+  }
+
   return (
     <Card
-      className="bg-white/5 backdrop-blur-md border border-white/10 overflow-hidden hover:bg-white/10 transition-all cursor-pointer"
+      className={`bg-white/5 backdrop-blur-md border border-white/10 overflow-hidden hover:bg-white/10 cursor-pointer transition-all duration-300 ${
+        isDeleting ? 'opacity-0 scale-95 pointer-events-none' : 'opacity-100 scale-100'
+      }`}
       onClick={onClick}
     >
       {/* Media Preview Section */}
