@@ -2906,6 +2906,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ========================================
+  // ADMIN STRIPE SETTINGS ENDPOINTS
+  // ========================================
+
+  // GET /api/admin/stripe - Get Stripe settings (admin)
+  app.get('/api/admin/stripe', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const settings = await storage.getStripeSettings();
+      // Mask sensitive keys for display (only show last 4 chars)
+      const maskedSettings = settings ? {
+        id: settings.id,
+        publishableKey: settings.publishableKey,
+        secretKey: settings.secretKey ? `sk_****${settings.secretKey.slice(-4)}` : null,
+        webhookSecret: settings.webhookSecret ? `whsec_****${settings.webhookSecret.slice(-4)}` : null,
+        priceIdStarter: settings.priceIdStarter,
+        priceIdBasic: settings.priceIdBasic,
+        priceIdPro: settings.priceIdPro,
+        priceIdBusiness: settings.priceIdBusiness,
+      } : null;
+      res.json({ settings: maskedSettings });
+    } catch (error: any) {
+      console.error('[Admin] Error fetching Stripe settings:', error);
+      res.status(500).json({ error: 'Failed to fetch Stripe settings', details: error.message });
+    }
+  });
+
+  // PUT /api/admin/stripe - Update Stripe settings (admin)
+  app.put('/api/admin/stripe', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const {
+        publishableKey,
+        secretKey,
+        webhookSecret,
+        priceIdStarter,
+        priceIdBasic,
+        priceIdPro,
+        priceIdBusiness,
+      } = req.body;
+
+      // Only update fields that are provided (not empty strings with masked values)
+      const updates: any = {};
+      if (publishableKey !== undefined && !publishableKey.includes('****')) {
+        updates.publishableKey = publishableKey || null;
+      }
+      if (secretKey !== undefined && !secretKey.includes('****')) {
+        updates.secretKey = secretKey || null;
+      }
+      if (webhookSecret !== undefined && !webhookSecret.includes('****')) {
+        updates.webhookSecret = webhookSecret || null;
+      }
+      if (priceIdStarter !== undefined) {
+        updates.priceIdStarter = priceIdStarter || null;
+      }
+      if (priceIdBasic !== undefined) {
+        updates.priceIdBasic = priceIdBasic || null;
+      }
+      if (priceIdPro !== undefined) {
+        updates.priceIdPro = priceIdPro || null;
+      }
+      if (priceIdBusiness !== undefined) {
+        updates.priceIdBusiness = priceIdBusiness || null;
+      }
+
+      const updatedSettings = await storage.updateStripeSettings(updates);
+      res.json({ success: true, settings: updatedSettings });
+    } catch (error: any) {
+      console.error('[Admin] Error updating Stripe settings:', error);
+      res.status(500).json({ error: 'Failed to update Stripe settings', details: error.message });
+    }
+  });
+
+  // ========================================
   // STRIPE SUBSCRIPTION BILLING ENDPOINTS
   // ========================================
 

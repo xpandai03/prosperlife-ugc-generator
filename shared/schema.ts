@@ -189,6 +189,20 @@ export const creditTransactions = pgTable("credit_transactions", {
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
 });
 
+// Stripe Settings - white-label Stripe configuration
+export const stripeSettings = pgTable("stripe_settings", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  publishableKey: text("publishable_key"), // pk_live_... or pk_test_...
+  secretKey: text("secret_key"), // sk_live_... or sk_test_...
+  webhookSecret: text("webhook_secret"), // whsec_...
+  priceIdStarter: text("price_id_starter"), // price_... for 100 credits
+  priceIdBasic: text("price_id_basic"), // price_... for 500 credits
+  priceIdPro: text("price_id_pro"), // price_... for 1500 credits
+  priceIdBusiness: text("price_id_business"), // price_... for 5000 credits
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+});
+
 // ============================================
 // END XPAND CREDITS SYSTEM
 // ============================================
@@ -405,6 +419,15 @@ export const insertCreditTransactionSchema = createInsertSchema(creditTransactio
   createdAt: true,
 });
 
+export const insertStripeSettingsSchema = createInsertSchema(stripeSettings, {
+  createdAt: () => z.date().optional(),
+  updatedAt: () => z.date().optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -448,3 +471,6 @@ export type InsertUserCredits = z.infer<typeof insertUserCreditsSchema>;
 
 export type CreditTransaction = typeof creditTransactions.$inferSelect;
 export type InsertCreditTransaction = z.infer<typeof insertCreditTransactionSchema>;
+
+export type StripeSettings = typeof stripeSettings.$inferSelect;
+export type InsertStripeSettings = z.infer<typeof insertStripeSettingsSchema>;

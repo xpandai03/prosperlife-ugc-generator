@@ -7,6 +7,7 @@ import {
   exports,
   socialPosts,
   mediaAssets,
+  stripeSettings,
   type User,
   type InsertUser,
   type Task,
@@ -21,6 +22,7 @@ import {
   type InsertSocialPost,
   type MediaAsset,
   type InsertMediaAsset,
+  type StripeSettings,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
@@ -66,6 +68,10 @@ export interface IStorage {
   getMediaAsset(id: string): Promise<MediaAsset | undefined>;
   updateMediaAsset(id: string, updates: Partial<Omit<MediaAsset, 'id' | 'createdAt'>>): Promise<MediaAsset | undefined>;
   getMediaAssetsByUser(userId: string): Promise<MediaAsset[]>;
+
+  // Stripe Settings (White-label)
+  getStripeSettings(): Promise<StripeSettings | undefined>;
+  updateStripeSettings(updates: Partial<Omit<StripeSettings, 'id' | 'createdAt' | 'updatedAt'>>): Promise<StripeSettings | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -286,6 +292,34 @@ export class DatabaseStorage implements IStorage {
       .where(eq(mediaAssets.taskId, taskId))
       .limit(1);
     return results[0];
+  }
+
+  // Stripe Settings (White-label)
+  async getStripeSettings(): Promise<StripeSettings | undefined> {
+    const [settings] = await db.select().from(stripeSettings).limit(1);
+    return settings || undefined;
+  }
+
+  async updateStripeSettings(updates: Partial<Omit<StripeSettings, 'id' | 'createdAt' | 'updatedAt'>>): Promise<StripeSettings | undefined> {
+    // Get the existing settings or create one
+    let existingSettings = await this.getStripeSettings();
+
+    if (!existingSettings) {
+      // Create a new settings row
+      const [created] = await db
+        .insert(stripeSettings)
+        .values({ ...updates, updatedAt: new Date() })
+        .returning();
+      return created || undefined;
+    }
+
+    // Update existing settings
+    const [updated] = await db
+      .update(stripeSettings)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(stripeSettings.id, existingSettings.id))
+      .returning();
+    return updated || undefined;
   }
 }
 

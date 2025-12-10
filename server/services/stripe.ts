@@ -2,21 +2,107 @@
  * Stripe Service (Phase 9: XPAND Credits)
  *
  * Handles Stripe API interactions for credit package purchases
+ * Supports white-label: checks DB stripe_settings first, falls back to env vars
  * Documentation: https://stripe.com/docs/api
  */
 
 import Stripe from 'stripe';
 import { CREDIT_PACKAGES, type CreditPackage } from './creditService';
+import { storage } from '../storage';
 
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+// Environment variables (fallback)
+const ENV_STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+const ENV_STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+const ENV_PRICE_ID_STARTER = process.env.STRIPE_PRICE_ID_STARTER;
+const ENV_PRICE_ID_BASIC = process.env.STRIPE_PRICE_ID_BASIC;
+const ENV_PRICE_ID_PRO = process.env.STRIPE_PRICE_ID_PRO;
+const ENV_PRICE_ID_BUSINESS = process.env.STRIPE_PRICE_ID_BUSINESS;
 
-if (!STRIPE_SECRET_KEY) {
-  console.warn('[Stripe] Warning: STRIPE_SECRET_KEY not configured');
+// Cached Stripe instance (may be replaced by DB settings)
+let cachedStripe: Stripe | null = null;
+let cachedSecretKey: string | null = null;
+
+if (!ENV_STRIPE_SECRET_KEY) {
+  console.warn('[Stripe] Warning: STRIPE_SECRET_KEY not configured in env vars');
 }
 
-// Initialize Stripe SDK
-const stripe = STRIPE_SECRET_KEY
-  ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-11-20.acacia' as any })
+/**
+ * Get Stripe instance - checks DB settings first, falls back to env vars
+ */
+async function getStripeInstance(): Promise<Stripe | null> {
+  try {
+    const dbSettings = await storage.getStripeSettings();
+    const secretKey = dbSettings?.secretKey || ENV_STRIPE_SECRET_KEY;
+
+    if (!secretKey) {
+      console.warn('[Stripe] No secret key available (DB or env)');
+      return null;
+    }
+
+    // If key changed or first init, create new instance
+    if (cachedSecretKey !== secretKey) {
+      cachedSecretKey = secretKey;
+      cachedStripe = new Stripe(secretKey, { apiVersion: '2024-11-20.acacia' as any });
+      console.log('[Stripe] Initialized with', dbSettings?.secretKey ? 'DB settings' : 'env vars');
+    }
+
+    return cachedStripe;
+  } catch (error) {
+    console.error('[Stripe] Error getting Stripe instance:', error);
+    // Fallback to env on error
+    if (ENV_STRIPE_SECRET_KEY && !cachedStripe) {
+      cachedStripe = new Stripe(ENV_STRIPE_SECRET_KEY, { apiVersion: '2024-11-20.acacia' as any });
+      cachedSecretKey = ENV_STRIPE_SECRET_KEY;
+    }
+    return cachedStripe;
+  }
+}
+
+/**
+ * Get webhook secret - checks DB settings first, falls back to env vars
+ */
+async function getWebhookSecret(): Promise<string | null> {
+  try {
+    const dbSettings = await storage.getStripeSettings();
+    return dbSettings?.webhookSecret || ENV_STRIPE_WEBHOOK_SECRET || null;
+  } catch {
+    return ENV_STRIPE_WEBHOOK_SECRET || null;
+  }
+}
+
+/**
+ * Get price ID for a package - checks DB settings first, falls back to env vars
+ */
+async function getPriceId(packageId: string): Promise<string | null> {
+  try {
+    const dbSettings = await storage.getStripeSettings();
+    switch (packageId) {
+      case 'starter':
+        return dbSettings?.priceIdStarter || ENV_PRICE_ID_STARTER || null;
+      case 'basic':
+        return dbSettings?.priceIdBasic || ENV_PRICE_ID_BASIC || null;
+      case 'pro':
+        return dbSettings?.priceIdPro || ENV_PRICE_ID_PRO || null;
+      case 'business':
+        return dbSettings?.priceIdBusiness || ENV_PRICE_ID_BUSINESS || null;
+      default:
+        return null;
+    }
+  } catch {
+    // Fallback to env on error
+    switch (packageId) {
+      case 'starter': return ENV_PRICE_ID_STARTER || null;
+      case 'basic': return ENV_PRICE_ID_BASIC || null;
+      case 'pro': return ENV_PRICE_ID_PRO || null;
+      case 'business': return ENV_PRICE_ID_BUSINESS || null;
+      default: return null;
+    }
+  }
+}
+
+// Legacy: Initialize default Stripe SDK from env for backwards compat
+const stripe = ENV_STRIPE_SECRET_KEY
+  ? new Stripe(ENV_STRIPE_SECRET_KEY, { apiVersion: '2024-11-20.acacia' as any })
   : null;
 
 // Legacy subscription params (deprecated)
@@ -106,6 +192,7 @@ export const stripeService = {
 
   /**
    * Phase 9: Create a Stripe Checkout Session for credit package purchase
+   * Uses DB settings if available, falls back to env vars
    *
    * @param params - User ID, email, package ID, and redirect URLs
    * @returns Checkout session ID and URL
@@ -113,11 +200,10 @@ export const stripeService = {
   async createCreditCheckoutSession(
     params: CreateCreditCheckoutParams
   ): Promise<CheckoutSessionResponse> {
-    if (!stripe) {
-      console.error('[Stripe] Configuration check failed:', {
-        stripeInitialized: !!stripe,
-        secretKeyPresent: !!STRIPE_SECRET_KEY,
-      });
+    // Get dynamic Stripe instance (checks DB first)
+    const stripeInstance = await getStripeInstance();
+    if (!stripeInstance) {
+      console.error('[Stripe] Configuration check failed: No Stripe instance available');
       throw new Error('Stripe is not configured');
     }
 
@@ -127,20 +213,23 @@ export const stripeService = {
       throw new Error(`Invalid credit package: ${params.packageId}`);
     }
 
+    // Check for configured price ID (DB or env)
+    const priceId = await getPriceId(params.packageId);
+
     console.log('[Stripe] Creating credit checkout session:', {
       userId: params.userId,
       email: params.userEmail,
       package: creditPackage.name,
       credits: creditPackage.credits,
       priceUsd: creditPackage.priceUsd,
+      usingPriceId: !!priceId,
     });
 
     try {
-      const session = await stripe.checkout.sessions.create({
-        mode: 'payment', // One-time payment, not subscription
-        payment_method_types: ['card'],
-        line_items: [
-          {
+      // Build line items - use price ID if available, otherwise use price_data
+      const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = priceId
+        ? [{ price: priceId, quantity: 1 }]
+        : [{
             price_data: {
               currency: 'usd',
               product_data: {
@@ -150,8 +239,12 @@ export const stripeService = {
               unit_amount: Math.round(creditPackage.priceUsd * 100), // Stripe uses cents
             },
             quantity: 1,
-          },
-        ],
+          }];
+
+      const session = await stripeInstance.checkout.sessions.create({
+        mode: 'payment', // One-time payment, not subscription
+        payment_method_types: ['card'],
+        line_items: lineItems,
         customer_email: params.userEmail,
         client_reference_id: params.userId, // Link session to our user
         success_url: params.successUrl,
@@ -275,6 +368,7 @@ export const stripeService = {
 
   /**
    * Verify Stripe webhook signature
+   * Uses DB settings if available, falls back to env vars
    *
    * @param payload - Raw request body
    * @param signature - Stripe-Signature header
@@ -292,6 +386,33 @@ export const stripeService = {
 
     try {
       return stripe.webhooks.constructEvent(payload, signature, webhookSecret);
+    } catch (error: any) {
+      console.error('[Stripe] Webhook signature verification failed:', error);
+      throw new Error(`Webhook signature verification failed: ${error.message}`);
+    }
+  },
+
+  /**
+   * Verify Stripe webhook signature (async version)
+   * Checks DB settings first, falls back to env vars
+   *
+   * @param payload - Raw request body
+   * @param signature - Stripe-Signature header
+   * @returns Parsed Stripe event
+   */
+  async verifyWebhookSignatureAsync(payload: string | Buffer, signature: string): Promise<Stripe.Event> {
+    const stripeInstance = await getStripeInstance();
+    if (!stripeInstance) {
+      throw new Error('Stripe is not configured');
+    }
+
+    const webhookSecret = await getWebhookSecret();
+    if (!webhookSecret) {
+      throw new Error('Webhook secret not configured (DB or env)');
+    }
+
+    try {
+      return stripeInstance.webhooks.constructEvent(payload, signature, webhookSecret);
     } catch (error: any) {
       console.error('[Stripe] Webhook signature verification failed:', error);
       throw new Error(`Webhook signature verification failed: ${error.message}`);
