@@ -27,10 +27,15 @@ export function BrandProvider({ children }: { children: ReactNode }) {
 
   const fetchBrandSettings = async () => {
     try {
+      console.log('[BrandContext] Fetching brand settings...');
       const response = await fetch('/api/brand');
       if (response.ok) {
         const data: BrandSettings = await response.json();
+        console.log('[BrandContext] Received:', data);
         setAppName(data.appName || DEFAULT_APP_NAME);
+        console.log('[BrandContext] Set appName to:', data.appName || DEFAULT_APP_NAME);
+      } else {
+        console.error('[BrandContext] Response not OK:', response.status);
       }
     } catch (error) {
       console.error('[BrandContext] Failed to fetch brand settings:', error);
@@ -45,8 +50,10 @@ export function BrandProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refetch = async () => {
+    console.log('[BrandContext] refetch() called');
     setLoading(true);
     await fetchBrandSettings();
+    console.log('[BrandContext] refetch() complete, appName is now:', appName);
   };
 
   const value = {

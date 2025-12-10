@@ -129,12 +129,17 @@ export default function AdminCreditsPage() {
       const response = await apiRequest("PUT", "/api/admin/brand", { appName });
       return response.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/brand"] });
-      refetchBrand(); // Update global brand context
-      toast({ title: "Brand updated", description: "App name has been changed successfully." });
+    onSuccess: async (data) => {
+      console.log('[Admin] Brand update success:', data);
+      // Invalidate queries first
+      await queryClient.invalidateQueries({ queryKey: ["/api/admin/brand"] });
+      // Then refetch global brand context (this updates navbar)
+      await refetchBrand();
+      console.log('[Admin] Brand context refetched, new appName should be:', data.appName);
+      toast({ title: "Brand updated", description: `App name changed to "${data.appName}"` });
     },
     onError: (error: any) => {
+      console.error('[Admin] Brand update error:', error);
       toast({
         title: "Error",
         description: error.message || "Failed to update brand settings",
