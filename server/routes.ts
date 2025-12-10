@@ -690,12 +690,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           );
 
           // Update user with profile ID
-          await storage.updateUser(userId, { lateProfileId: profileId });
+          console.log('[OAuth] Saving lateProfileId to user:', { userId, profileId });
+          const updateResult = await storage.updateUser(userId, { lateProfileId: profileId });
+          console.log('[OAuth] updateUser result:', updateResult ? 'success' : 'failed', 'lateProfileId:', updateResult?.lateProfileId);
 
           // Reload user
           user = await storage.getUser(userId);
 
-          console.log('[OAuth] Late profile created:', { userId, profileId });
+          console.log('[OAuth] Late profile created and saved:', {
+            userId,
+            profileId,
+            savedProfileId: user?.lateProfileId,
+            saveSuccess: user?.lateProfileId === profileId,
+          });
         } catch (profileError: any) {
           console.log('[OAuth] Profile creation error details:', {
             message: profileError.message,
