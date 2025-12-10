@@ -190,12 +190,18 @@ export default function AdminCreditsPage() {
 
         {/* Tabs for Credit Pricing and Stripe Settings */}
         <Tabs defaultValue="pricing" className="w-full">
-          <TabsList className="bg-white/5 border border-white/10">
-            <TabsTrigger value="pricing" className="data-[state=active]:bg-white/10">
+          <TabsList className="bg-white/5 border border-white/10 rounded-lg p-1">
+            <TabsTrigger
+              value="pricing"
+              className="text-white data-[state=active]:bg-white/15 data-[state=active]:text-yellow-400 data-[state=inactive]:text-white/70 data-[state=inactive]:hover:text-white data-[state=inactive]:hover:bg-white/10 rounded-md px-4 py-2 transition-all"
+            >
               <Coins className="h-4 w-4 mr-2" />
               Credit Pricing
             </TabsTrigger>
-            <TabsTrigger value="stripe" className="data-[state=active]:bg-white/10">
+            <TabsTrigger
+              value="stripe"
+              className="text-white data-[state=active]:bg-white/15 data-[state=active]:text-yellow-400 data-[state=inactive]:text-white/70 data-[state=inactive]:hover:text-white data-[state=inactive]:hover:bg-white/10 rounded-md px-4 py-2 transition-all"
+            >
               <CreditCard className="h-4 w-4 mr-2" />
               Stripe Settings
             </TabsTrigger>
@@ -280,15 +286,15 @@ export default function AdminCreditsPage() {
                           key={feature.featureKey}
                           className={`grid grid-cols-4 gap-4 py-3 px-4 rounded-lg items-center transition-all ${
                             isEditing
-                              ? 'bg-amber-500/10 border border-amber-500/30'
+                              ? 'bg-white/10 border border-yellow-500/40'
                               : 'bg-white/5 hover:bg-white/8'
                           }`}
                         >
                           <div>
                             <p className="text-white font-medium">{feature.featureName}</p>
-                            <p className="text-xs text-gray-500">{feature.featureKey}</p>
+                            <p className="text-xs text-white/50">{feature.featureKey}</p>
                           </div>
-                          <div className="text-gray-300">${feature.baseCostUsd}</div>
+                          <div className="text-white">${feature.baseCostUsd}</div>
                           <div>
                             {isEditing ? (
                               <Input
@@ -296,11 +302,11 @@ export default function AdminCreditsPage() {
                                 min="0"
                                 value={editValue}
                                 onChange={(e) => setEditValue(parseInt(e.target.value) || 0)}
-                                className="w-24 bg-white/10 border-amber-500/50 text-white focus:border-amber-400"
+                                className="w-24 bg-white/10 border-yellow-500/50 text-white focus:border-yellow-400"
                                 autoFocus
                               />
                             ) : (
-                              <span className="text-yellow-500 font-semibold text-lg">{feature.creditCost}</span>
+                              <span className="text-yellow-400 font-semibold text-lg">{feature.creditCost}</span>
                             )}
                           </div>
                           <div>
@@ -308,7 +314,7 @@ export default function AdminCreditsPage() {
                               <div className="flex gap-2">
                                 <Button
                                   size="sm"
-                                  className="bg-green-600 hover:bg-green-700"
+                                  className="bg-green-600 hover:bg-green-700 text-white"
                                   onClick={() => handleSave(feature.featureKey)}
                                   disabled={updatePricingMutation.isPending}
                                 >
@@ -326,6 +332,7 @@ export default function AdminCreditsPage() {
                                   variant="outline"
                                   onClick={cancelEditing}
                                   disabled={updatePricingMutation.isPending}
+                                  className="border-red-500/50 text-red-400 hover:text-red-300 hover:bg-red-500/10"
                                 >
                                   <X className="h-4 w-4 mr-1" />
                                   Cancel
@@ -336,9 +343,9 @@ export default function AdminCreditsPage() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => startEditing(feature)}
-                                className="hover:bg-white/10"
+                                className="border-yellow-500/50 text-yellow-400 hover:text-yellow-300 hover:bg-yellow-500/10"
                               >
-                                <Pencil className="h-4 w-4 mr-1" />
+                                <Pencil className="h-4 w-4 mr-1 text-yellow-400" />
                                 Edit
                               </Button>
                             )}
