@@ -71,6 +71,8 @@ interface MediaAsset {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  rating?: number | null;
+  deletedAt?: string | null;
 }
 
 interface GetMediaGalleryResponse {

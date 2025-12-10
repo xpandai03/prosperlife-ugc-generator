@@ -25,7 +25,7 @@ import {
   type StripeSettings,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, isNull } from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -68,6 +68,8 @@ export interface IStorage {
   getMediaAsset(id: string): Promise<MediaAsset | undefined>;
   updateMediaAsset(id: string, updates: Partial<Omit<MediaAsset, 'id' | 'createdAt'>>): Promise<MediaAsset | undefined>;
   getMediaAssetsByUser(userId: string): Promise<MediaAsset[]>;
+  softDeleteMediaAsset(assetId: string, userId: string): Promise<MediaAsset | undefined>;
+  rateMediaAsset(assetId: string, userId: string, rating: number): Promise<MediaAsset | undefined>;
 
   // Stripe Settings (White-label)
   getStripeSettings(): Promise<StripeSettings | undefined>;
@@ -278,11 +280,47 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getMediaAssetsByUser(userId: string): Promise<MediaAsset[]> {
+    // Filter out soft-deleted assets (deletedAt IS NULL)
     return db
       .select()
       .from(mediaAssets)
-      .where(eq(mediaAssets.userId, userId))
+      .where(and(
+        eq(mediaAssets.userId, userId),
+        isNull(mediaAssets.deletedAt)
+      ))
       .orderBy(desc(mediaAssets.createdAt));
+  }
+
+  // Soft delete a media asset (Dec 2025)
+  async softDeleteMediaAsset(assetId: string, userId: string): Promise<MediaAsset | undefined> {
+    const [updated] = await db
+      .update(mediaAssets)
+      .set({
+        deletedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(mediaAssets.id, assetId),
+        eq(mediaAssets.userId, userId)
+      ))
+      .returning();
+    return updated;
+  }
+
+  // Rate a media asset 1-5 stars (Dec 2025)
+  async rateMediaAsset(assetId: string, userId: string, rating: number): Promise<MediaAsset | undefined> {
+    const [updated] = await db
+      .update(mediaAssets)
+      .set({
+        rating,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(mediaAssets.id, assetId),
+        eq(mediaAssets.userId, userId)
+      ))
+      .returning();
+    return updated;
   }
 
   async getMediaAssetByTaskId(taskId: string): Promise<MediaAsset | undefined> {

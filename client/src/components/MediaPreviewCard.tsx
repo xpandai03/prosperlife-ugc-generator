@@ -1,23 +1,41 @@
 /**
- * Media Preview Card Component - Phase 4.4
+ * Media Preview Card Component - Phase 4.4 (Updated Dec 2025)
  *
  * Gallery card for displaying AI-generated media assets
  * - Shows image or video preview
  * - Status badges (processing/ready/error)
  * - Action buttons (Post, Download)
+ * - Rating (1-5 stars)
+ * - Delete button with confirmation
  * - Integrates with caption generation and scheduling
  */
 
 import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Loader2,
   CheckCircle2,
   XCircle,
   Image as ImageIcon,
+  Trash2,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { RatingStars } from "@/components/ui/RatingStars";
+import { useToast } from "@/hooks/use-toast";
+import { getAuthHeaders } from "@/lib/queryClient";
 
 // TypeScript interface
 interface MediaAsset {
@@ -38,6 +56,8 @@ interface MediaAsset {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  rating?: number | null;
+  deletedAt?: string | null;
 }
 
 interface MediaPreviewCardProps {
@@ -48,6 +68,98 @@ interface MediaPreviewCardProps {
 export function MediaPreviewCard({ asset, onClick }: MediaPreviewCardProps) {
   const [showPostModal, setShowPostModal] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: async (assetId: string) => {
+      const authHeaders = await getAuthHeaders();
+      const response = await fetch(`/api/ai/media/${assetId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders,
+        },
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to delete');
+      }
+
+      return await response.json();
+    },
+    onSuccess: () => {
+      // Invalidate gallery to refresh
+      queryClient.invalidateQueries({ queryKey: ['/api/ai/media'] });
+      toast({
+        title: 'Deleted',
+        description: 'UGC ad removed from your gallery',
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Delete failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Rating mutation
+  const ratingMutation = useMutation({
+    mutationFn: async ({ assetId, rating }: { assetId: string; rating: number }) => {
+      const authHeaders = await getAuthHeaders();
+      const response = await fetch(`/api/ai/media/${assetId}/rating`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders,
+        },
+        credentials: 'include',
+        body: JSON.stringify({ rating }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to rate');
+      }
+
+      return await response.json();
+    },
+    onSuccess: (data) => {
+      // Optimistic update - invalidate to refresh
+      queryClient.invalidateQueries({ queryKey: ['/api/ai/media'] });
+      toast({
+        title: 'Rated',
+        description: `You rated this ad ${data.asset.rating} star${data.asset.rating !== 1 ? 's' : ''}`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Rating failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent card click
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDelete = () => {
+    deleteMutation.mutate(asset.id);
+    setShowDeleteConfirm(false);
+  };
+
+  const handleRatingChange = (rating: number) => {
+    ratingMutation.mutate({ assetId: asset.id, rating });
+  };
 
   // Robust URL extraction with ALL possible paths (Drizzle + API variations)
   const getMediaUrl = (): string | null => {
@@ -232,14 +344,48 @@ export function MediaPreviewCard({ asset, onClick }: MediaPreviewCardProps) {
             )}
           </Badge>
         </div>
+
+        {/* Delete Button (Bottom Right) */}
+        <div className="absolute bottom-3 right-3 z-10">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 bg-black/60 backdrop-blur-sm hover:bg-red-500/80 text-white/70 hover:text-white transition-all"
+            onClick={handleDelete}
+            disabled={deleteMutation.isPending}
+          >
+            {deleteMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
       </div>
 
       {/* Card Content */}
-      <CardContent className="p-4 space-y-2">
+      <CardContent className="p-4 space-y-3">
         {/* Prompt */}
         <p className="text-sm text-white/90 line-clamp-2 leading-relaxed">
           {asset.prompt}
         </p>
+
+        {/* Rating (only for ready assets) */}
+        {asset.status === 'ready' && (
+          <div
+            className="flex items-center gap-2"
+            onClick={(e) => e.stopPropagation()} // Prevent card click when rating
+          >
+            <RatingStars
+              rating={asset.rating}
+              onChange={handleRatingChange}
+              size="sm"
+            />
+            {ratingMutation.isPending && (
+              <Loader2 className="h-3 w-3 animate-spin text-white/50" />
+            )}
+          </div>
+        )}
 
         {/* Metadata */}
         <div className="flex items-center gap-2 text-xs text-white/60">
@@ -277,6 +423,29 @@ export function MediaPreviewCard({ asset, onClick }: MediaPreviewCardProps) {
           </p>
         </div>
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent className="bg-[#1a1a1a] border-white/10">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">Delete this UGC ad?</AlertDialogTitle>
+            <AlertDialogDescription className="text-white/60">
+              This will remove the ad from your gallery. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-white/5 border-white/10 text-white hover:bg-white/10">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

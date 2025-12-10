@@ -244,6 +244,12 @@ export const mediaAssets = pgTable("media_assets", {
   generationMode: text("generation_mode"), // 'nanobana+veo3' | 'veo3-only' | 'sora2'
   chainMetadata: jsonb("chain_metadata"), // Stores: { step, nanoImageUrl, imageAnalysis, videoPrompt, timestamps }
 
+  // User Feedback (Dec 2025)
+  rating: integer("rating"), // 1-5 stars rating, CHECK constraint in DB
+
+  // Soft Delete (Dec 2025)
+  deletedAt: timestamp("deleted_at"), // Soft delete timestamp
+
   // Timestamps
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
   updatedAt: timestamp("updated_at").notNull().default(sql`now()`),

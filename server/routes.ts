@@ -2183,6 +2183,100 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   /**
+   * DELETE /api/ai/media/:id
+   *
+   * Soft delete a media asset (Dec 2025)
+   * Sets deleted_at timestamp, asset won't appear in gallery
+   */
+  app.delete("/api/ai/media/:id", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Verify asset exists
+      const asset = await storage.getMediaAsset(id);
+      if (!asset) {
+        return res.status(404).json({ error: "Asset not found" });
+      }
+
+      // Verify ownership
+      if (asset.userId !== req.userId) {
+        return res.status(404).json({ error: "Asset not found" });
+      }
+
+      // Soft delete
+      const deleted = await storage.softDeleteMediaAsset(id, req.userId!);
+      if (!deleted) {
+        return res.status(500).json({ error: "Failed to delete asset" });
+      }
+
+      console.log(`[UGC Delete] User ${req.userId} soft-deleted asset ${id}`);
+
+      res.json({
+        success: true,
+        message: "Asset deleted successfully",
+      });
+
+    } catch (error: any) {
+      console.error("[UGC Delete] Error:", error);
+      res.status(500).json({
+        error: "Failed to delete asset",
+        details: error.message,
+      });
+    }
+  });
+
+  /**
+   * POST /api/ai/media/:id/rating
+   *
+   * Rate a media asset 1-5 stars (Dec 2025)
+   */
+  app.post("/api/ai/media/:id/rating", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { rating } = req.body;
+
+      // Validate rating
+      if (typeof rating !== 'number' || rating < 1 || rating > 5 || !Number.isInteger(rating)) {
+        return res.status(400).json({
+          error: "Invalid rating",
+          message: "Rating must be an integer between 1 and 5",
+        });
+      }
+
+      // Verify asset exists
+      const asset = await storage.getMediaAsset(id);
+      if (!asset) {
+        return res.status(404).json({ error: "Asset not found" });
+      }
+
+      // Verify ownership
+      if (asset.userId !== req.userId) {
+        return res.status(404).json({ error: "Asset not found" });
+      }
+
+      // Update rating
+      const updated = await storage.rateMediaAsset(id, req.userId!, rating);
+      if (!updated) {
+        return res.status(500).json({ error: "Failed to update rating" });
+      }
+
+      console.log(`[UGC Rating] User ${req.userId} rated asset ${id} with ${rating} stars`);
+
+      res.json({
+        success: true,
+        asset: updated,
+      });
+
+    } catch (error: any) {
+      console.error("[UGC Rating] Error:", error);
+      res.status(500).json({
+        error: "Failed to update rating",
+        details: error.message,
+      });
+    }
+  });
+
+  /**
    * POST /api/ai/media/use-for-video
    *
    * Convert an existing image asset to video generation
