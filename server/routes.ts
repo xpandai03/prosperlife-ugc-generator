@@ -1932,26 +1932,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Phase 9: Determine credit feature key based on generation mode
-      let creditFeatureKey: string;
-      if (generationMode === 'nanobana+veo3') {
-        creditFeatureKey = 'ugc_veo3_quality'; // 70 credits
-      } else if (generationMode === 'veo3-only') {
-        creditFeatureKey = 'ugc_veo3_fast'; // 35 credits
+      // Dynamic Credit Pricing for UGC based on duration
+      // Base costs (for ~10s):
+      //   - nanobana+veo3 (Premium): 70 credits
+      //   - veo3-only (Fast): 35 credits
+      //   - sora2 (Budget): 18 credits
+      // Per-second multipliers (for duration > 10s):
+      //   - nanobana+veo3: 2.0 credits/sec
+      //   - veo3-only: 1.5 credits/sec
+      //   - sora2: 1.0 credits/sec
+
+      const UGC_PRICING: Record<string, { base: number; multiplier: number; name: string }> = {
+        'nanobana+veo3': { base: 70, multiplier: 2.0, name: 'UGC Premium (NanoBanana + Veo3)' },
+        'veo3-only': { base: 35, multiplier: 1.5, name: 'UGC Fast (Veo3)' },
+        'sora2': { base: 18, multiplier: 1.0, name: 'UGC Budget (Sora2)' },
+      };
+
+      const pricing = UGC_PRICING[generationMode] || UGC_PRICING['sora2']; // Default to cheapest if unknown
+      const baseCost = pricing.base;
+      const perSecondMultiplier = pricing.multiplier;
+
+      // Calculate total credits based on duration
+      let totalCredits: number;
+      if (duration <= 10) {
+        totalCredits = baseCost;
       } else {
-        creditFeatureKey = 'ugc_sora2'; // 18 credits
+        const extraSeconds = duration - 10;
+        totalCredits = baseCost + Math.round(extraSeconds * perSecondMultiplier);
       }
 
-      // Phase 9: Check credits
-      const creditCheck = await creditService.checkCredits(req.userId!, creditFeatureKey);
-      if (!creditCheck.hasEnough) {
-        console.log('[AI UGC Preset] Insufficient credits:', req.userId);
+      console.log('[AI UGC Preset] Dynamic pricing:', {
+        mode: generationMode,
+        duration,
+        baseCost,
+        perSecondMultiplier,
+        totalCredits,
+      });
+
+      // Check if user has enough credits
+      const userBalance = await creditService.getBalance(req.userId!);
+      if (userBalance < totalCredits) {
+        console.log('[AI UGC Preset] Insufficient credits:', {
+          userId: req.userId,
+          balance: userBalance,
+          required: totalCredits,
+        });
         return res.status(402).json({
           error: 'Insufficient credits',
-          message: `You need ${creditCheck.required} credits for ${creditCheck.featureName}, but only have ${creditCheck.balance}`,
-          required: creditCheck.required,
-          balance: creditCheck.balance,
-          featureKey: creditFeatureKey,
+          message: `You need ${totalCredits} credits for ${pricing.name} (${duration}s), but only have ${userBalance}`,
+          required: totalCredits,
+          balance: userBalance,
+          mode: generationMode,
+          duration,
         });
       }
 
@@ -2006,6 +2038,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         metadata: {
           generationMode,
           duration, // Store requested duration
+          creditsPricing: {
+            baseCost,
+            perSecondMultiplier,
+            totalCredits,
+          },
           productBrief: {
             productName,
             productFeatures,
@@ -2055,18 +2092,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Deduct credits after starting generation (Phase 9: XPAND Credits)
-      await creditService.deductCredits(req.userId!, creditFeatureKey, {
-        assetId,
-        generationMode,
-        productName
-      });
+      // Deduct credits using dynamic pricing (Phase 9: XPAND Credits)
+      await creditService.deductCreditsAmount(
+        req.userId!,
+        totalCredits,
+        `UGC Ad: ${pricing.name} (${duration}s)`,
+        {
+          mode: generationMode,
+          duration,
+          baseCost,
+          perSecondMultiplier,
+          finalCost: totalCredits,
+          assetId,
+          productName,
+        }
+      );
 
       res.json({
         success: true,
         assetId,
         status: 'processing',
         message: 'UGC ad generation started with preset templates',
+        creditsDeducted: totalCredits,
       });
 
     } catch (error: any) {

@@ -22,8 +22,8 @@ import {
 } from '@shared/schema';
 import { eq, desc, sql } from 'drizzle-orm';
 
-// Default credits for new users
-const DEFAULT_NEW_USER_CREDITS = 50;
+// Default credits for new users (increased from 50 to 2000)
+const DEFAULT_NEW_USER_CREDITS = 2000;
 
 /**
  * Get user's current credit balance
@@ -180,6 +180,70 @@ export async function deductCredits(
     .returning();
 
   console.log(`[CreditService] Deducted ${cost} credits from ${userId} for ${featureKey}. New balance: ${newBalance}`);
+
+  return transaction;
+}
+
+/**
+ * Deduct a specific amount of credits (for dynamic pricing)
+ * Unlike deductCredits, this accepts a direct credit amount instead of a featureKey lookup
+ * Returns the transaction record or null if insufficient credits
+ */
+export async function deductCreditsAmount(
+  userId: string,
+  amount: number,
+  description: string,
+  metadata?: Record<string, unknown>
+): Promise<CreditTransaction | null> {
+  // Get current balance
+  const [balanceRecord] = await db
+    .select()
+    .from(userCredits)
+    .where(eq(userCredits.userId, userId));
+
+  const currentBalance = balanceRecord?.balance ?? 0;
+
+  if (currentBalance < amount) {
+    console.warn(`[CreditService] Insufficient credits for ${userId}: has ${currentBalance}, needs ${amount}`);
+    return null;
+  }
+
+  const newBalance = currentBalance - amount;
+
+  // Update balance
+  if (balanceRecord) {
+    await db
+      .update(userCredits)
+      .set({
+        balance: newBalance,
+        lifetimeUsed: sql`${userCredits.lifetimeUsed} + ${amount}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(userCredits.userId, userId));
+  } else {
+    // Should not happen, but create record if missing
+    await db.insert(userCredits).values({
+      userId,
+      balance: newBalance,
+      lifetimePurchased: 0,
+      lifetimeUsed: amount,
+    });
+  }
+
+  // Log transaction
+  const [transaction] = await db
+    .insert(creditTransactions)
+    .values({
+      userId,
+      amount: -amount,
+      balanceAfter: newBalance,
+      featureKey: 'ugc_dynamic', // Dynamic UGC pricing
+      description,
+      metadata: metadata ?? null,
+    })
+    .returning();
+
+  console.log(`[CreditService] Deducted ${amount} credits from ${userId} (dynamic). New balance: ${newBalance}`);
 
   return transaction;
 }
