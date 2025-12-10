@@ -2,7 +2,7 @@
  * AdminCreditsPage - Admin dashboard for managing credit pricing and Stripe settings
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -149,17 +149,19 @@ export default function AdminCreditsPage() {
 
   // Populate stripe form when data loads
   const stripeSettings = stripeData?.settings;
-  if (stripeSettings && stripeForm.publishableKey === '' && !stripeLoading) {
-    setStripeForm({
-      publishableKey: stripeSettings.publishableKey || '',
-      secretKey: stripeSettings.secretKey || '',
-      webhookSecret: stripeSettings.webhookSecret || '',
-      priceIdStarter: stripeSettings.priceIdStarter || '',
-      priceIdBasic: stripeSettings.priceIdBasic || '',
-      priceIdPro: stripeSettings.priceIdPro || '',
-      priceIdBusiness: stripeSettings.priceIdBusiness || '',
-    });
-  }
+  useEffect(() => {
+    if (stripeSettings && !stripeLoading) {
+      setStripeForm({
+        publishableKey: stripeSettings.publishableKey || '',
+        secretKey: stripeSettings.secretKey || '',
+        webhookSecret: stripeSettings.webhookSecret || '',
+        priceIdStarter: stripeSettings.priceIdStarter || '',
+        priceIdBasic: stripeSettings.priceIdBasic || '',
+        priceIdPro: stripeSettings.priceIdPro || '',
+        priceIdBusiness: stripeSettings.priceIdBusiness || '',
+      });
+    }
+  }, [stripeSettings, stripeLoading]);
 
   const pricing = pricingData?.pricing || [];
   const settings = settingsData?.settings;
