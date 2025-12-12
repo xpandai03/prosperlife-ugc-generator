@@ -2127,6 +2127,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       } else {
         // Mode B & C: Use standard generation process
+        const providerModel = generationMode === 'sora2' ? 'sora2' : 'veo3';
+
+        // ✅ DIAGNOSTIC: Log exact provider params for debugging
+        console.log(`[ugc] provider_selected mode=${generationMode} provider=${provider} model=${providerModel} duration=${effectiveDuration} aspect=9:16`);
+
         processMediaGeneration(assetId, {
           provider,
           type,
@@ -2134,7 +2139,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           referenceImageUrl: finalProductImageUrl,
           options: {
             duration: effectiveDuration, // ✅ Use server-resolved duration for provider
-            model: generationMode === 'sora2' ? 'sora2' : 'veo3',
+            model: providerModel,
+            aspectRatio: '9:16', // ✅ EXPLICIT: Force vertical for UGC selfie videos
           },
         }).catch((error) => {
           console.log(`[ugc] job_failed id=${assetId} reason=process_error error=${error.message}`);
@@ -2791,6 +2797,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           // Generate with Veo3 instead
           try {
+            console.log(`[ugc] fallback_provider mode=veo3-only duration=${veo3Duration} aspect=9:16`);
+
             const veo3Result = await generateMedia({
               provider: 'kie-veo3',
               type: 'video',
@@ -2799,6 +2807,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               options: {
                 duration: veo3Duration,
                 model: 'veo3',
+                aspectRatio: '9:16', // ✅ EXPLICIT: Force vertical for UGC selfie videos
               },
             });
 

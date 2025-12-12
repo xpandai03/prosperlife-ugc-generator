@@ -73,9 +73,17 @@ IMAGE ANALYSIS: {imageAnalysis}
 
 VIDEO SPECIFICATIONS:
 - Duration: Exactly {duration} seconds
+- Format: Vertical 9:16 (1080x1920) - TikTok/Reels style
 - Style: Handheld selfie video (slight natural shake is good)
 - Camera: iPhone 15 Pro quality
 - Audio: Person speaks naturally to camera in casual, friendly tone
+
+FRAMING (CRITICAL):
+- Medium close-up: head and shoulders visible, face fully in frame
+- Subject centered, filling ~60% of vertical frame
+- Full face visible: forehead to chin, no cropping
+- Eye-level camera angle (selfie style)
+- Leave small margin at top and bottom of frame
 
 DIALOGUE SCRIPT (1-2 sentences max):
 "{icp} casually mentions {product} while highlighting {features}. Tone is genuine enthusiasm, NOT scripted sales pitch."
@@ -109,10 +117,18 @@ SETTING: {scene}
 
 VIDEO REQUIREMENTS:
 - Duration: Exactly {duration} seconds
+- Format: Vertical 9:16 (1080x1920) - TikTok/Reels style
 - Style: Handheld selfie video (natural camera shake expected)
 - Camera: iPhone 15 Pro quality (realistic, not overproduced)
 - Lighting: Natural daylight or soft indoor light
 - Person holds phone at arm's length, filming themselves
+
+FRAMING (CRITICAL):
+- Medium close-up: head and shoulders visible, face fully in frame
+- Subject centered, filling ~60% of vertical frame
+- Full face visible: forehead to chin, no cropping
+- Eye-level camera angle (not looking down or up)
+- Leave small margin at top and bottom of frame
 
 DIALOGUE SCRIPT (casual, 1-2 sentences):
 Person speaks naturally to camera about {product}, mentioning {features} in a genuine, enthusiastic way. NOT a scripted sales pitch - sounds like a friend recommending something they love.
@@ -143,11 +159,18 @@ LOCATION: {scene}
 KEY FEATURES: {features}
 
 VIDEO STYLE:
-- Vertical 9:16 format (TikTok/Instagram Reels)
-- Duration: {duration} seconds
+- Vertical 9:16 format (1080x1920) for TikTok/Instagram Reels
+- Duration: Exactly {duration} seconds
 - Handheld selfie (natural shake, not stabilized)
 - Natural lighting (avoid harsh shadows)
 - Casual, authentic vibe
+
+FRAMING (CRITICAL):
+- Medium close-up: head and shoulders visible, face fully in frame
+- Subject centered, filling ~60% of vertical frame
+- Full face visible: forehead to chin, no cropping
+- Eye-level camera angle (selfie style)
+- Leave small margin at top and bottom of frame
 
 CONTENT:
 Person holds phone in one hand, {product} in the other. They speak directly to camera for {duration} seconds, casually explaining why they love {product}, specifically mentioning {features}. Tone is friendly and genuine, like talking to a friend.
