@@ -702,6 +702,17 @@ export const kieService = {
     //  - Veo3 videos: data.response.resultUrls (lines 411, 1008)
     //  - Sora videos: JSON.parse(data.resultJson).resultUrls (line 681)
 
+    // ✅ FIX: Parse resultJson if it's a string (Sora2 returns JSON string, not object)
+    let parsedResultJson = rawData.resultJson;
+    if (typeof rawData.resultJson === 'string' && rawData.resultJson.trim()) {
+      try {
+        parsedResultJson = JSON.parse(rawData.resultJson);
+        console.log('[KIE Service] Parsed resultJson string for Sora2');
+      } catch (e) {
+        console.warn('[KIE Service] Failed to parse resultJson string:', e);
+      }
+    }
+
     let urls: any[] = [];
 
     // Check each path and use the first non-empty result
@@ -711,18 +722,18 @@ export const kieService = {
     } else if (rawData.response?.resultUrls && rawData.response.resultUrls.length > 0) {
       // Veo3 PRIMARY path (videos)
       urls = rawData.response.resultUrls;
-    } else if (rawData.resultJson?.resultUrls && rawData.resultJson.resultUrls.length > 0) {
-      // Sora/NanoBanana path (may be JSON string)
-      urls = rawData.resultJson.resultUrls;
+    } else if (parsedResultJson?.resultUrls && parsedResultJson.resultUrls.length > 0) {
+      // Sora/NanoBanana path (now properly parsed from JSON string)
+      urls = parsedResultJson.resultUrls;
     } else if (rawData.response?.videoUrl) {
       // Veo3 videoUrl
       urls = [rawData.response.videoUrl];
     } else if (rawData.response?.resultUrl) {
       // Single URL (Veo3)
       urls = [rawData.response.resultUrl];
-    } else if (rawData.resultJson?.resultUrl) {
+    } else if (parsedResultJson?.resultUrl) {
       // Single URL (Sora)
-      urls = [rawData.resultJson.resultUrl];
+      urls = [parsedResultJson.resultUrl];
     } else if (rawData.metadata?.response?.resultUrls && rawData.metadata.response.resultUrls.length > 0) {
       // Nested metadata path
       urls = rawData.metadata.response.resultUrls;
