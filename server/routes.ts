@@ -55,11 +55,13 @@ const processVideoAdvancedSchema = z.object({
 });
 
 // Phase 4: UGC Preset Generation Schema
-// Duration limits per mode: Veo3 modes max 20s, Sora2 max 25s
+// Duration limits per mode: Veo3 modes max 20s, Sora2 max 15s
+// NOTE: Sora2 non-storyboard models (sora-2-image-to-video, sora-2-text-to-video)
+// only support n_frames "10" and "15" - NOT "25"
 const MODE_DURATION_LIMITS: Record<string, number> = {
   'nanobana+veo3': 20,
   'veo3-only': 20,
-  'sora2': 25,
+  'sora2': 15, // Limited to 15s - KIE sora-2-* models don't support n_frames "25"
 };
 
 const generateUGCPresetSchema = z.object({
@@ -85,10 +87,12 @@ const generateUGCPresetSchema = z.object({
   // Validate duration against mode-specific limits
   const maxDuration = MODE_DURATION_LIMITS[data.generationMode] || 20;
   return data.duration <= maxDuration;
-}, {
-  message: "Duration exceeds maximum allowed for selected mode",
+}, (data) => ({
+  message: data.generationMode === 'sora2'
+    ? `Mode C (Sora2) supports up to 15 seconds. Selected: ${data.duration}s. Use Mode A or B for longer videos.`
+    : `Duration (${data.duration}s) exceeds maximum (${MODE_DURATION_LIMITS[data.generationMode] || 20}s) for selected mode`,
   path: ["duration"],
-});
+}));
 
 // Configure multer for file uploads (in-memory storage)
 const upload = multer({

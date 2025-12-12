@@ -164,7 +164,7 @@ export const MODE_OPTIONS: ModeOption[] = [
     description: "Sora 2 video (cheaper alternative, decent quality)",
     badge: "CHEAPER",
     estimatedTime: "~1-2 min",
-    maxDuration: 25,
+    maxDuration: 15, // Sora2 non-storyboard models only support n_frames "10" or "15"
   },
 ];
 

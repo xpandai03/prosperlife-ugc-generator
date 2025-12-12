@@ -3,13 +3,14 @@
  *
  * Supports:
  * - Veo3 video generation (duration in seconds, 6-20s)
- * - Sora2 video generation (n_frames: "10", "15", or "25")
+ * - Sora2 video generation (n_frames: "10" or "15" for non-storyboard models)
  * - 4O Image generation
  * - Flux Kontext image generation
  *
  * IMPORTANT - Model-specific duration handling:
- * - Veo3: Uses `duration` field (numeric, in seconds)
- * - Sora2: Uses `n_frames` field (string, only "10", "15", or "25" allowed)
+ * - Veo3: Uses `duration` field (numeric, in seconds, 6-20s)
+ * - Sora2 (sora-2-image-to-video, sora-2-text-to-video): Uses `n_frames` field
+ *   Only "10" (10s) and "15" (15s) are supported - NOT "25"!
  *
  * Documentation: https://docs.kie.ai/
  */
@@ -26,41 +27,50 @@ if (!KIE_API_KEY) {
 }
 
 /**
- * Sora2 allowed n_frames values (per KIE API docs)
- * Only these string values are accepted: "10", "15", "25"
+ * Sora2 allowed n_frames values for non-storyboard models
+ * IMPORTANT: sora-2-image-to-video and sora-2-text-to-video only support "10" and "15"
+ * The "25" option is only for sora-2-pro-storyboard model
  */
-const SORA2_ALLOWED_FRAMES = ['10', '15', '25'] as const;
+const SORA2_ALLOWED_FRAMES = ['10', '15'] as const;
 type Sora2FrameValue = typeof SORA2_ALLOWED_FRAMES[number];
+
+/**
+ * Maximum duration supported by Sora2 non-storyboard models
+ */
+const SORA2_MAX_DURATION = 15;
 
 /**
  * Map a duration (in seconds) to a valid Sora2 n_frames value
  *
- * Rules:
+ * Rules for sora-2-image-to-video / sora-2-text-to-video:
  * - 6-12 seconds → "10"
- * - 13-19 seconds → "15"
- * - 20-25 seconds → "25"
+ * - 13+ seconds → "15" (capped - these models don't support "25")
  *
  * Returns the closest valid n_frames value
  */
 function mapDurationToSora2Frames(duration: number): Sora2FrameValue {
   if (duration <= 12) {
     return '10';
-  } else if (duration <= 19) {
-    return '15';
   } else {
-    return '25';
+    return '15'; // Cap at 15 - sora-2-text/image-to-video don't support "25"
   }
 }
 
 /**
  * Validate that a duration is within Sora2's supported range
- * Sora2 supports 10s, 15s, or 25s videos
+ * Sora2 non-storyboard models support up to 15 seconds (n_frames "10" or "15")
  */
 function validateSora2Duration(duration: number): { valid: boolean; message?: string } {
-  if (duration < 6 || duration > 25) {
+  if (duration < 6) {
     return {
       valid: false,
-      message: `Selected duration (${duration}s) is out of Sora2's supported range (6-25 seconds).`
+      message: `Selected duration (${duration}s) is too short. Sora2 requires at least 6 seconds.`
+    };
+  }
+  if (duration > SORA2_MAX_DURATION) {
+    return {
+      valid: false,
+      message: `Mode C (Sora2) supports up to ${SORA2_MAX_DURATION} seconds. Please select a shorter duration or use Mode A/B for longer videos.`
     };
   }
   return { valid: true };
