@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'wouter';
 import { Video, Settings, Shield } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { useBrand } from '@/contexts/BrandContext';
+// Brand context import removed - using hardcoded app name for Prosper fork
 
 interface UserData {
   id: string;
@@ -27,8 +27,8 @@ export function Navbar() {
   const [headerShapeClass, setHeaderShapeClass] = useState('rounded-full');
   const shapeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Get dynamic app name from brand context
-  const { appName } = useBrand();
+  // Hardcoded app name for Prosper UGC Studio fork
+  const appName = 'ProsperUGC';
 
   // Fetch user data to check admin status
   const { data: userData } = useQuery<UserData>({
