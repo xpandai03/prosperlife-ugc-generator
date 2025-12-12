@@ -1944,6 +1944,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`[AI UGC Preset] Duration requested: ${duration}s for mode: ${generationMode}`);
 
+      // ✅ SERVER-SIDE AUTHORITATIVE DURATION RESOLUTION
+      // Mode C (sora2) only supports n_frames "10" or "15" - enforce this regardless of client
+      let effectiveDuration: number;
+      if (generationMode === 'sora2') {
+        effectiveDuration = duration >= 15 ? 15 : 10;
+      } else {
+        effectiveDuration = duration;
+      }
+      console.log(`[ugc] resolved_duration mode=${generationMode} client=${duration} effective=${effectiveDuration}`);
+
       // Handle uploaded file: upload to KIE and get public URL
       let finalProductImageUrl = productImageUrl;
       if (req.file) {
@@ -2032,11 +2042,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         features: productFeatures,
         icp: formatICPForPrompt(customerPersona),
         scene: formatSceneForPrompt(videoSetting),
-        duration, // Used in video prompt templates for accurate duration instructions
+        duration: effectiveDuration, // ✅ Use server-resolved duration for prompt text
       };
 
       // ✅ Debug: Log duration explicitly to verify it's being passed
-      console.log(`[ugc] prompt_gen mode=${generationMode} duration=${duration}s`);
+      console.log(`[ugc] prompt_gen mode=${generationMode} duration=${effectiveDuration}s`);
 
       // Generate prompt using preset templates
       const generatedPrompt = generatePrompt(generationMode as GenerationMode, promptVariables);
@@ -2079,7 +2089,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         retryCount: 0,
         metadata: {
           generationMode,
-          duration, // Store requested duration
+          duration: effectiveDuration, // ✅ Store server-resolved duration
           creditsPricing: {
             baseCost,
             perSecondMultiplier,
@@ -2107,7 +2117,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           assetId,
           promptVariables,
           productImageUrl: finalProductImageUrl,
-          duration, // Pass duration to chain service
+          duration: effectiveDuration, // ✅ Use server-resolved duration for chain service
         }).then(() => {
           processChainWorkflow(assetId).catch((error) => {
             console.log(`[ugc] job_failed id=${assetId} reason=chain_error error=${error.message}`);
@@ -2123,7 +2133,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           prompt: generatedPrompt,
           referenceImageUrl: finalProductImageUrl,
           options: {
-            duration,
+            duration: effectiveDuration, // ✅ Use server-resolved duration for provider
             model: generationMode === 'sora2' ? 'sora2' : 'veo3',
           },
         }).catch((error) => {
