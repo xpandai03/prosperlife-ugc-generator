@@ -2364,9 +2364,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`[AI Use For Video] Converting image ${sourceAssetId} to video for user ${req.userId}`);
 
       // Create enhanced prompt based on original image prompt
+      // Duration defaults to 10s for image-to-video conversion (Veo3 text-to-video)
+      const defaultDuration = 10;
       const videoPrompt = source.prompt
-        ? `${source.prompt}. Create a dynamic 8-second UGC-style video showcasing this product.`
-        : `Create an engaging 8-second UGC-style product video based on this image.`;
+        ? `${source.prompt}. Create a dynamic ${defaultDuration}-second UGC-style video showcasing this product.`
+        : `Create an engaging ${defaultDuration}-second UGC-style product video based on this image.`;
 
       // Create new media asset record
       const assetId = uuidv4();
@@ -2393,7 +2395,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         type: 'video',
         prompt: videoPrompt,
         referenceImageUrl: sourceUrl,
-        options: null,
+        options: {
+          duration: defaultDuration,
+          model: 'veo3',
+        },
       }).catch((err) => {
         console.error(`[AI Use For Video] Background generation failed for ${assetId}:`, err);
       });
