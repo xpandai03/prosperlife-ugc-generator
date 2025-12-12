@@ -2096,39 +2096,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         chainMetadata: generationMode === 'nanobana+veo3' ? { step: 'generating_image' } : null,
       });
 
-      console.log('[AI UGC Preset] Created media asset:', assetId);
+      // ✅ LIFECYCLE LOG: Job created
+      console.log(`[ugc] job_created id=${assetId} provider=${provider} mode=${generationMode}`);
 
       // Mode A: Use chain orchestration service
       if (generationMode === 'nanobana+veo3') {
-        console.log('[AI UGC Preset] Starting Mode A chain workflow');
         ugcChainService.startImageGeneration({
           assetId,
           promptVariables,
           productImageUrl: finalProductImageUrl,
           duration, // Pass duration to chain service
         }).then(() => {
-          // Start polling loop after image generation task is submitted
-          console.log('[AI UGC Preset] Starting chain polling workflow for asset:', assetId);
           processChainWorkflow(assetId).catch((error) => {
-            console.error('[AI UGC Chain] Polling workflow error:', error);
+            console.log(`[ugc] job_failed id=${assetId} reason=chain_error error=${error.message}`);
           });
         }).catch((error) => {
-          console.error('[AI UGC Chain] Background chain error:', error);
+          console.log(`[ugc] job_failed id=${assetId} reason=start_error error=${error.message}`);
         });
       } else {
         // Mode B & C: Use standard generation process
-        console.log(`[AI UGC Preset] Starting ${generationMode} direct generation`);
         processMediaGeneration(assetId, {
           provider,
           type,
           prompt: generatedPrompt,
           referenceImageUrl: finalProductImageUrl,
           options: {
-            duration, // Pass duration to media generation
+            duration,
             model: generationMode === 'sora2' ? 'sora2' : 'veo3',
           },
         }).catch((error) => {
-          console.error('[AI UGC Preset] Background processing error:', error);
+          console.log(`[ugc] job_failed id=${assetId} reason=process_error error=${error.message}`);
         });
       }
 
@@ -2502,28 +2499,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
   /**
    * Background function to process chain workflow (Phase 5: Mode A)
    * Polls for image → analyzes with Vision → generates video → polls for video
+   *
+   * TIMEOUTS (per-step):
+   * - Image generation: 3 minutes
+   * - Image analysis: 2 minutes
+   * - Video generation: 3 minutes
+   * - Total chain: 10 minutes hard cap
    */
   async function processChainWorkflow(assetId: string): Promise<void> {
-    const pollInterval = 30000; // 30 seconds
-    const maxAttempts = 120; // 120 * 30s = 60 minutes (chain takes longer)
+    const pollInterval = 15000; // 15 seconds (reduced from 30s for faster detection)
+    const maxAttempts = 40; // 40 * 15s = 10 minutes max
     const startTime = Date.now();
-    const timeoutMs = 60 * 60 * 1000; // 60 minutes timeout for full chain
+    const timeoutMs = 10 * 60 * 1000; // 10 minutes hard cap for full chain
     let pollAttempts = 0;
 
-    console.log('[Chain Workflow] Starting chain polling for asset', assetId);
+    // ✅ LIFECYCLE LOG: Job polling started
+    console.log(`[ugc] poll_start id=${assetId} mode=chain max_time=600s`);
 
     try {
       while (pollAttempts < maxAttempts) {
         // Check timeout
         const elapsed = Date.now() - startTime;
+        const elapsedSeconds = Math.round(elapsed / 1000);
+
         if (elapsed > timeoutMs) {
-          const elapsedMinutes = Math.round(elapsed / 60000);
-          console.error(`[Chain Workflow] ❌ TIMEOUT after ${elapsedMinutes} minutes for ${assetId}`);
+          // ✅ LIFECYCLE LOG: Job timeout
+          console.log(`[ugc] job_timeout id=${assetId} after=${elapsedSeconds}s reason=chain_timeout`);
 
           await ugcChainService.handleChainError(
             assetId,
             'error' as any,
-            `Chain workflow timed out after ${elapsedMinutes} minutes`
+            `Provider timeout after ${elapsedSeconds}s. Please try again.`
           );
 
           return;
@@ -2534,126 +2540,135 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const asset = await storage.getMediaAsset(assetId);
         if (!asset) {
-          console.error(`[Chain Workflow] Asset ${assetId} not found`);
+          console.log(`[ugc] job_failed id=${assetId} reason=asset_not_found`);
           return;
         }
 
         const chainMetadata = asset.chainMetadata as any;
         if (!chainMetadata) {
-          console.error(`[Chain Workflow] No chain metadata for ${assetId}`);
+          console.log(`[ugc] job_failed id=${assetId} reason=no_chain_metadata`);
+          await storage.updateMediaAsset(assetId, {
+            status: 'error',
+            errorMessage: 'Internal error: missing chain metadata',
+          });
           return;
         }
 
         const step = chainMetadata.step;
-        const elapsedSeconds = Math.round(elapsed / 1000);
 
-        console.log(`[Chain Workflow] Poll ${pollAttempts}: Step=${step}, Elapsed=${elapsedSeconds}s`);
+        // ✅ LIFECYCLE LOG: Poll status
+        console.log(`[ugc] poll_status id=${assetId} step=${step} elapsed=${elapsedSeconds}s attempt=${pollAttempts}/${maxAttempts}`);
 
         // Handle different chain steps
+        // Per-step timeouts: 3 min image, 2 min analysis, 3 min video
+        const STEP_TIMEOUT_MS = {
+          generating_image: 3 * 60 * 1000,  // 3 minutes
+          analyzing_image: 2 * 60 * 1000,   // 2 minutes
+          generating_video: 3 * 60 * 1000,  // 3 minutes
+        };
+
         if (step === 'generating_image') {
-          // ✅ Reduced timeout for dev testing: 4 minutes (allows for retry mechanism)
           const imageStartTime = chainMetadata.timestamps?.imageStarted;
-          if (imageStartTime) {
-            const imageElapsed = Date.now() - new Date(imageStartTime).getTime();
-            const imageMinutes = Math.round(imageElapsed / 60000);
+          const imageElapsed = imageStartTime ? Date.now() - new Date(imageStartTime).getTime() : 0;
 
-            if (imageElapsed > 4 * 60 * 1000) { // 4 minutes (reduced from 10 for faster fallback)
-              console.error(`[Chain Workflow] ❌ Image generation timeout after ${imageMinutes} minutes`);
-              console.log(`[Chain Workflow] ⚠️ Triggering fallback to Veo3...`);
+          if (imageElapsed > STEP_TIMEOUT_MS.generating_image) {
+            console.log(`[ugc] step_timeout id=${assetId} step=generating_image after=${Math.round(imageElapsed/1000)}s`);
 
-              // Attempt fallback instead of hard failure
-              try {
-                const asset = await storage.getMediaAsset(assetId);
-                const productImageUrl = asset?.metadata && typeof asset.metadata === 'object' && 'productImageUrl' in asset.metadata
-                  ? (asset.metadata as any).productImageUrl
-                  : undefined;
-                await ugcChainService.fallbackToVeo3(
-                  assetId,
-                  `Image generation timeout after ${imageMinutes} minutes`,
-                  productImageUrl
-                );
-                // Continue polling for video generation
-              } catch (fallbackError: any) {
-                console.error(`[Chain Workflow] ❌ Fallback failed:`, fallbackError);
-                await ugcChainService.handleChainError(
-                  assetId,
-                  'generating_image',
-                  `NanoBanana timeout + fallback failed: ${fallbackError?.message || 'Unknown error'}`
-                );
-                return;
-              }
-            } else {
-              // Poll for image completion
-              const imageReady = await ugcChainService.checkImageStatus(assetId);
-              if (imageReady) {
-                console.log(`[Chain Workflow] ✅ Image ready, moved to analysis/video generation`);
-              }
-            }
-          } else {
-            // No start time, just poll
-            const imageReady = await ugcChainService.checkImageStatus(assetId);
-            if (imageReady) {
-              console.log(`[Chain Workflow] ✅ Image ready, moved to analysis/video generation`);
-            }
-          }
-        } else if (step === 'fallback_to_veo3') {
-          // Fallback triggered - transition to video generation
-          console.log(`[Chain Workflow] ⚠️ Fallback mode active, transitioning to video generation...`);
-          // The fallbackToVeo3 method already starts video generation
-          // Just wait for next poll to detect generating_video state
-        } else if (step === 'generating_video') {
-          // ✅ Video timeout: 6 minutes (reduced from unlimited for faster error detection)
-          const videoStartTime = chainMetadata.timestamps?.videoStarted;
-          if (videoStartTime) {
-            const videoElapsed = Date.now() - new Date(videoStartTime).getTime();
-            const videoMinutes = Math.round(videoElapsed / 60000);
-
-            if (videoElapsed > 6 * 60 * 1000) { // 6 minutes
-              console.error(`[Chain Workflow] ❌ Video generation timeout after ${videoMinutes} minutes`);
-              await ugcChainService.handleChainError(
-                assetId,
-                'generating_video',
-                `Veo3 video generation timed out after ${videoMinutes} minutes`
-              );
+            // Attempt fallback to Veo3 instead of hard failure
+            try {
+              const productImageUrl = asset?.metadata && typeof asset.metadata === 'object' && 'productImageUrl' in asset.metadata
+                ? (asset.metadata as any).productImageUrl
+                : undefined;
+              await ugcChainService.fallbackToVeo3(assetId, 'Image generation timeout', productImageUrl);
+            } catch (fallbackError: any) {
+              console.log(`[ugc] job_failed id=${assetId} reason=image_timeout_fallback_failed`);
+              await ugcChainService.handleChainError(assetId, 'generating_image', `Image timeout + fallback failed`);
               return;
             }
+          } else {
+            // Poll for image completion
+            try {
+              const imageReady = await ugcChainService.checkImageStatus(assetId);
+              if (imageReady) {
+                console.log(`[ugc] step_complete id=${assetId} step=generating_image`);
+              }
+            } catch (err: any) {
+              console.log(`[ugc] poll_error id=${assetId} step=generating_image error=${err.message}`);
+            }
+          }
+
+        } else if (step === 'analyzing_image') {
+          // ✅ NEW: Handle analyzing_image step (was missing!)
+          const analysisStartTime = chainMetadata.timestamps?.imageCompleted; // Analysis starts when image completes
+          const analysisElapsed = analysisStartTime ? Date.now() - new Date(analysisStartTime).getTime() : 0;
+
+          if (analysisElapsed > STEP_TIMEOUT_MS.analyzing_image) {
+            console.log(`[ugc] step_timeout id=${assetId} step=analyzing_image after=${Math.round(analysisElapsed/1000)}s`);
+            await ugcChainService.handleChainError(assetId, 'analyzing_image', 'Image analysis timeout');
+            return;
+          }
+          // Analysis is sync (OpenAI call), so if we're stuck here, it means the call hung
+          // The ugcChainService.analyzeImage should have already moved to next step
+
+        } else if (step === 'fallback_to_veo3') {
+          // Fallback triggered - transition to video generation
+          // The fallbackToVeo3 method already starts video generation
+          // Just wait for next poll to detect generating_video state
+
+        } else if (step === 'generating_video') {
+          const videoStartTime = chainMetadata.timestamps?.videoStarted;
+          const videoElapsed = videoStartTime ? Date.now() - new Date(videoStartTime).getTime() : 0;
+
+          if (videoElapsed > STEP_TIMEOUT_MS.generating_video) {
+            console.log(`[ugc] step_timeout id=${assetId} step=generating_video after=${Math.round(videoElapsed/1000)}s`);
+            await ugcChainService.handleChainError(assetId, 'generating_video', 'Video generation timeout');
+            return;
           }
 
           // Poll for video completion
-          const videoReady = await ugcChainService.checkVideoStatus(assetId);
-          if (videoReady) {
-            console.log(`[Chain Workflow] ✅ Video ready, chain complete!`);
-            return; // Chain complete
+          try {
+            const videoReady = await ugcChainService.checkVideoStatus(assetId);
+            if (videoReady) {
+              // ✅ LIFECYCLE LOG: Job completed
+              console.log(`[ugc] job_completed id=${assetId} elapsed=${elapsedSeconds}s`);
+              return; // Chain complete
+            }
+          } catch (err: any) {
+            console.log(`[ugc] poll_error id=${assetId} step=generating_video error=${err.message}`);
           }
+
         } else if (step === 'completed') {
-          console.log(`[Chain Workflow] Chain already completed for ${assetId}`);
+          console.log(`[ugc] job_completed id=${assetId} elapsed=${elapsedSeconds}s (already)`);
           return;
+
         } else if (step === 'error') {
-          console.error(`[Chain Workflow] Chain failed for ${assetId}:`, chainMetadata.error);
+          console.log(`[ugc] job_failed id=${assetId} reason=${chainMetadata.error || 'unknown'}`);
           return;
+
+        } else {
+          // Unknown step - this shouldn't happen
+          console.log(`[ugc] poll_unknown_step id=${assetId} step=${step}`);
         }
 
         // Continue polling
       }
 
-      // Max attempts reached
-      console.error(`[Chain Workflow] ❌ Max polling attempts reached for ${assetId}`);
-      await ugcChainService.handleChainError(
-        assetId,
-        'error' as any,
-        'Chain workflow exceeded maximum polling attempts'
-      );
+      // Max attempts reached - fail the job
+      console.log(`[ugc] job_timeout id=${assetId} after=${Math.round((Date.now() - startTime)/1000)}s reason=max_attempts`);
+      await ugcChainService.handleChainError(assetId, 'error' as any, 'Provider timeout. Please try again.');
 
     } catch (error: any) {
-      console.error('[Chain Workflow] Fatal error:', error);
+      // ✅ LIFECYCLE LOG: Fatal error
+      console.log(`[ugc] job_failed id=${assetId} reason=fatal_error error=${error.message}`);
       await ugcChainService.handleChainError(assetId, 'error' as any, error.message);
     }
   }
 
   /**
    * Background function to process media generation
-   * Polls KIE API every 30s until complete (max 20 minutes)
-   * Implements 3x retry with exponential backoff on failures
+   * Polls KIE API until complete with hard timeout
+   *
+   * TIMEOUT: 3 minutes for direct generation (Mode B/C)
    */
   async function processMediaGeneration(
     assetId: string,
@@ -2668,22 +2683,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // ✅ PHASE 5: Check if this is a chain workflow
     const asset = await storage.getMediaAsset(assetId);
     if (asset?.generationMode === 'nanobana+veo3') {
-      console.log('[Media Generation] Detected chain workflow, using chain polling');
       return processChainWorkflow(assetId);
     }
 
-    const maxAttempts = 60; // ✅ PHASE 4.7.1: 60 * 30s = 30 minutes (was 40 = 20 min)
-    const pollInterval = 30000; // 30 seconds
-    const timeoutMs = 30 * 60 * 1000; // ✅ PHASE 4.7.1: 30 minutes timeout
-    const startTime = Date.now(); // ✅ PHASE 4.7.1: Track start time for timeout
+    const maxAttempts = 24; // 24 * 15s = 6 minutes max (gives buffer)
+    const pollInterval = 15000; // 15 seconds (faster detection)
+    const timeoutMs = 3 * 60 * 1000; // 3 minutes hard timeout
+    const startTime = Date.now();
     const maxRetries = 3;
     let retryCount = 0;
 
-    console.log('[Media Generation] Starting background processing:', {
-      assetId,
-      provider: params.provider,
-      type: params.type,
-    });
+    // ✅ LIFECYCLE LOG: Job started
+    console.log(`[ugc] job_created id=${assetId} provider=${params.provider} mode=direct`);
 
     try {
       // Step 1: Start generation
@@ -2736,47 +2747,104 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return;
       }
 
-      // Skip polling for Sora2 (uses webhook callbacks instead)
+      // ✅ FIX: Sora2 now uses polling WITH timeout failsafe
+      // Previously: relied on webhooks only, which could hang forever if webhook fails
+      // Now: poll with timeout, webhook can still update status early
       if (params.provider === 'sora2' || generationResult.provider === 'kie-sora2') {
-        console.log('[Media Generation] Sora2 uses webhooks - skipping polling. Will receive callback at completion.');
-        console.log('[Media Generation] Task submitted:', {
-          assetId,
-          taskId: generationResult.taskId,
-          provider: generationResult.provider,
-          note: 'Waiting for callback to /api/kie/sora2/callback'
+        console.log(`[ugc] poll_start id=${assetId} provider=sora2 max_time=180s`);
+
+        // Set a hard timeout for Sora2 jobs (3 minutes)
+        const sora2TimeoutMs = 3 * 60 * 1000;
+        let sora2PollAttempts = 0;
+        const sora2MaxAttempts = 12; // 12 * 15s = 3 minutes
+
+        while (sora2PollAttempts < sora2MaxAttempts) {
+          const elapsed = Date.now() - startTime;
+          const elapsedSeconds = Math.round(elapsed / 1000);
+
+          if (elapsed > sora2TimeoutMs) {
+            console.log(`[ugc] job_timeout id=${assetId} after=${elapsedSeconds}s reason=sora2_timeout`);
+            await storage.updateMediaAsset(assetId, {
+              status: 'error',
+              errorMessage: 'Provider timeout. Please try again.',
+            });
+            return;
+          }
+
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          sora2PollAttempts++;
+
+          // Check if webhook already updated the status
+          const currentAsset = await storage.getMediaAsset(assetId);
+          console.log(`[ugc] poll_status id=${assetId} status=${currentAsset?.status} elapsed=${elapsedSeconds}s`);
+
+          if (currentAsset?.status === 'ready') {
+            console.log(`[ugc] job_completed id=${assetId} elapsed=${elapsedSeconds}s`);
+            return;
+          }
+          if (currentAsset?.status === 'error' || currentAsset?.status === 'failed') {
+            console.log(`[ugc] job_failed id=${assetId} reason=${currentAsset?.errorMessage || 'unknown'}`);
+            return;
+          }
+
+          // Also poll KIE directly in case webhook is delayed
+          try {
+            const statusResult = await checkMediaStatus(generationResult.taskId, 'kie-sora2' as any);
+            if (statusResult.status === 'ready' && statusResult.resultUrl) {
+              await storage.updateMediaAsset(assetId, {
+                status: 'ready',
+                resultUrl: statusResult.resultUrl,
+                completedAt: new Date(),
+              });
+              console.log(`[ugc] job_completed id=${assetId} elapsed=${elapsedSeconds}s (via poll)`);
+              return;
+            }
+            if (statusResult.status === 'failed') {
+              await storage.updateMediaAsset(assetId, {
+                status: 'error',
+                errorMessage: statusResult.metadata?.errorMessage || 'Provider error',
+              });
+              console.log(`[ugc] job_failed id=${assetId} reason=sora2_provider_error`);
+              return;
+            }
+          } catch (pollErr: any) {
+            console.log(`[ugc] poll_error id=${assetId} error=${pollErr.message}`);
+            // Continue polling, don't fail immediately
+          }
+        }
+
+        // Max attempts reached
+        console.log(`[ugc] job_timeout id=${assetId} after=${Math.round((Date.now() - startTime)/1000)}s reason=sora2_max_attempts`);
+        await storage.updateMediaAsset(assetId, {
+          status: 'error',
+          errorMessage: 'Provider timeout. Please try again.',
         });
-        return; // Exit - webhook will update the asset
+        return;
       }
 
-      // Step 2: Poll for completion (async providers like KIE)
+      // Step 2: Poll for completion (Veo3)
       let pollAttempts = 0;
+      console.log(`[ugc] poll_start id=${assetId} provider=${params.provider} max_time=180s`);
 
       while (pollAttempts < maxAttempts) {
-        // ✅ PHASE 4.7.1: Check timeout before polling
         const elapsed = Date.now() - startTime;
-        if (elapsed > timeoutMs) {
-          const elapsedMinutes = Math.round(elapsed / 60000);
-          console.error(`[Media Generation] ❌ TIMEOUT after ${elapsedMinutes} minutes for ${assetId}`);
+        const elapsedSeconds = Math.round(elapsed / 1000);
 
+        // Check timeout
+        if (elapsed > timeoutMs) {
+          console.log(`[ugc] job_timeout id=${assetId} after=${elapsedSeconds}s reason=veo3_timeout`);
           await storage.updateMediaAsset(assetId, {
             status: 'error',
-            errorMessage: `Generation timed out after ${elapsedMinutes} minutes. The AI provider may be experiencing delays. Please try again or contact support.`,
+            errorMessage: 'Provider timeout. Please try again.',
           });
-
-          return; // Exit function
+          return;
         }
 
         await new Promise(resolve => setTimeout(resolve, pollInterval));
         pollAttempts++;
 
-        const elapsedSeconds = Math.round(elapsed / 1000);
-
-        // ✅ PHASE 4.7.1: Enhanced logging for Veo3
-        if (params.provider.includes('veo3')) {
-          console.log(`[Veo3 Polling] Attempt ${pollAttempts}/${maxAttempts} (${elapsedSeconds}s elapsed) for ${assetId}`);
-        } else {
-          console.log(`[Media Generation] Polling attempt ${pollAttempts}/${maxAttempts} for asset ${assetId}`);
-        }
+        // ✅ LIFECYCLE LOG: Poll status
+        console.log(`[ugc] poll_status id=${assetId} attempt=${pollAttempts}/${maxAttempts} elapsed=${elapsedSeconds}s`);
 
         try {
           const statusResult = await checkMediaStatus(
@@ -2784,77 +2852,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
             params.provider as any
           );
 
-          // ✅ PHASE 4.7.1: Provider-specific logging
-          if (params.provider.includes('veo3')) {
-            console.log('[Veo3 Polling] Status:', {
-              assetId,
-              status: statusResult.status,
-              hasUrls: !!statusResult.resultUrl,
-              elapsed: `${elapsedSeconds}s`,
-            });
-          } else {
-            console.log('[Media Generation] Status check result:', {
-              assetId,
-              status: statusResult.status,
-              hasResult: !!statusResult.resultUrl,
-              resultUrl: statusResult.resultUrl,
-            });
-          }
-
-          // Update asset with current status
-          await storage.updateMediaAsset(assetId, {
-            status: statusResult.status,
-            resultUrl: statusResult.resultUrl || undefined,
-            errorMessage: statusResult.metadata?.errorMessage || undefined,
-            apiResponse: statusResult as any,
-          });
-
-          // ✅ PHASE 4.7.1: Handle completion (ready or failed)
+          // Handle completion
           if (statusResult.status === 'ready') {
-            // Extract URLs from KIE response (already extracted in kie.ts)
             const resultUrls = statusResult.resultUrls || [];
 
-            // Validate we have at least one URL before marking as ready
+            // Validate we have at least one URL
             if (resultUrls.length === 0) {
-              console.log('[KIE FIX] Generation marked ready but no URLs found yet, continuing to poll...');
-              continue; // Keep polling
+              // Ready but no URLs - continue polling
+              continue;
             }
 
-            // Get first valid URL
             const finalResultUrl = resultUrls[0];
-
-            console.log('[KIE FIX ✅] Extracted resultUrls:', resultUrls);
-            console.log('[KIE FIX ✅] Storing result URL:', finalResultUrl);
 
             await storage.updateMediaAsset(assetId, {
               status: 'ready',
               resultUrl: finalResultUrl,
               completedAt: new Date(),
-              metadata: statusResult.metadata,
+              resultUrls: resultUrls,
             });
 
-            // ✅ Enhanced logging for Veo3 video completions
-            if (params.provider.includes('veo3')) {
-              const duration = Math.round((Date.now() - startTime) / 1000);
-              console.log(`[Veo3 ✅] Video saved successfully:`, {
-                assetId,
-                videoUrl: finalResultUrl.substring(0, 80) + '...',
-                durationSeconds: duration,
-              });
-            } else {
-              console.log(`[Media Generation] ✅ Completed: ${assetId}`);
-            }
+            // ✅ LIFECYCLE LOG: Job completed
+            console.log(`[ugc] job_completed id=${assetId} elapsed=${elapsedSeconds}s`);
             return;
           }
 
           if (statusResult.status === 'failed' || statusResult.status === 'error') {
-            console.error(`[Media Generation] ❌ Failed: ${assetId}`, statusResult.metadata?.errorMessage);
+            await storage.updateMediaAsset(assetId, {
+              status: 'error',
+              errorMessage: statusResult.metadata?.errorMessage || 'Provider error',
+            });
+
+            // ✅ LIFECYCLE LOG: Job failed
+            console.log(`[ugc] job_failed id=${assetId} reason=provider_error`);
             return;
           }
 
-          // Continue polling if still processing
+          // Still processing - continue polling
         } catch (error: any) {
-          console.error(`[Media Generation] Polling error (attempt ${pollAttempts}):`, error);
+          console.log(`[ugc] poll_error id=${assetId} error=${error.message}`);
 
           // Don't fail immediately on polling errors, just log and continue
           // Only fail if we've exhausted all attempts
@@ -2864,25 +2899,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // ✅ PHASE 4.7.1: Max polling attempts reached (shouldn't happen with timeout check)
-      console.error(`[Media Generation] ❌ Max polling attempts reached for ${assetId}`);
+      // Max polling attempts reached
+      console.log(`[ugc] job_timeout id=${assetId} after=${Math.round((Date.now() - startTime)/1000)}s reason=max_attempts`);
       await storage.updateMediaAsset(assetId, {
         status: 'error',
-        errorMessage: 'Generation timed out after maximum polling attempts',
+        errorMessage: 'Provider timeout. Please try again.',
       });
 
     } catch (error: any) {
-      console.error('[Media Generation] Fatal error:', error);
+      // ✅ LIFECYCLE LOG: Fatal error
+      console.log(`[ugc] job_failed id=${assetId} reason=fatal_error error=${error.message}`);
 
       // Update asset with error status
       try {
         await storage.updateMediaAsset(assetId, {
           status: 'error',
           errorMessage: error.message || 'Unknown error occurred',
-          retryCount,
         });
       } catch (updateError) {
-        console.error('[Media Generation] Failed to update asset with error:', updateError);
+        console.log(`[ugc] db_error id=${assetId} error=failed_to_update_status`);
       }
     }
   }
