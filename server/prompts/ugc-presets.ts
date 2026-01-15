@@ -79,7 +79,7 @@ VIDEO SPECIFICATIONS:
 - Audio: Person speaks naturally to camera in casual, friendly tone
 
 FRAMING (CRITICAL):
-- Medium close-up: head and shoulders visible, face fully in frame
+- Medium close-up: head and shoulders visible, face fully in frame [IMPORTANT]
 - Subject centered, filling ~60% of vertical frame
 - Full face visible: forehead to chin, no cropping
 - Eye-level camera angle (selfie style)
@@ -124,7 +124,7 @@ VIDEO REQUIREMENTS:
 - Person holds phone at arm's length, filming themselves
 
 FRAMING (CRITICAL):
-- Medium close-up: head and shoulders visible, face fully in frame
+- Medium close-up: head and shoulders visible, face fully in frame [IMPORTANT]
 - Subject centered, filling ~60% of vertical frame
 - Full face visible: forehead to chin, no cropping
 - Eye-level camera angle (not looking down or up)
@@ -166,7 +166,7 @@ VIDEO STYLE:
 - Casual, authentic vibe
 
 FRAMING (CRITICAL):
-- Medium close-up: head and shoulders visible, face fully in frame
+- Medium close-up: head and shoulders visible, face fully in frame [IMPORTANT]
 - Subject centered, filling ~60% of vertical frame
 - Full face visible: forehead to chin, no cropping
 - Eye-level camera angle (selfie style)

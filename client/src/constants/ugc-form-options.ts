@@ -176,7 +176,7 @@ export interface DurationOption {
 }
 
 export const DURATION_OPTIONS: DurationOption[] = [
-  { value: 6, label: "6 seconds" },
+  { value: 8, label: "8 seconds" },
   { value: 10, label: "10 seconds" },
   { value: 15, label: "15 seconds" },
   { value: 20, label: "20 seconds" },
@@ -205,7 +205,7 @@ export function isValidDuration(mode: string, duration: number): boolean {
 /**
  * Get the default duration (10 seconds)
  */
-export const DEFAULT_DURATION = 10;
+export const DEFAULT_DURATION = 6
 
 // ==================== HELPER FUNCTIONS ====================
 
