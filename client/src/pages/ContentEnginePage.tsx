@@ -132,7 +132,9 @@ export default function ContentEnginePage() {
   // Dialog states
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [specDetailOpen, setSpecDetailOpen] = useState(false);
+  const [videoPreviewOpen, setVideoPreviewOpen] = useState(false);
   const [selectedSpec, setSelectedSpec] = useState<SceneSpec | null>(null);
+  const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
 
   // Form states for new config
   const [newConfig, setNewConfig] = useState({
@@ -140,7 +142,7 @@ export default function ContentEnginePage() {
     niche: '',
     tone: '',
     cadence: '',
-    defaultDuration: 60,
+    defaultDuration: 20, // Max provider limit
     rendererPreference: 'automation' as const,
   });
 
@@ -369,12 +371,12 @@ export default function ContentEnginePage() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent className="bg-slate-800 border-slate-700">
-                          <SelectItem value="30">30 seconds</SelectItem>
-                          <SelectItem value="60">60 seconds</SelectItem>
-                          <SelectItem value="90">90 seconds</SelectItem>
-                          <SelectItem value="120">120 seconds</SelectItem>
+                          <SelectItem value="10">10 seconds</SelectItem>
+                          <SelectItem value="15">15 seconds</SelectItem>
+                          <SelectItem value="20">20 seconds (max)</SelectItem>
                         </SelectContent>
                       </Select>
+                      <p className="text-xs text-slate-500 mt-1">Provider limit: max 20s per video</p>
                     </div>
                   </div>
                   <DialogFooter>
@@ -539,7 +541,26 @@ export default function ContentEnginePage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => window.location.href = '/ai-studio'}
+                              onClick={async () => {
+                                // Fetch the media asset to get the video URL
+                                try {
+                                  const authHeaders = await getAuthHeaders();
+                                  const response = await fetch(`/api/ai/media/${spec.mediaAssetId}`, {
+                                    headers: authHeaders,
+                                  });
+                                  if (response.ok) {
+                                    const data = await response.json();
+                                    if (data.asset?.resultUrl) {
+                                      setPreviewVideoUrl(data.asset.resultUrl);
+                                      setSelectedSpec(spec);
+                                      setVideoPreviewOpen(true);
+                                    }
+                                  }
+                                } catch (error) {
+                                  console.error('Failed to fetch video:', error);
+                                  toast({ title: 'Error', description: 'Failed to load video', variant: 'destructive' });
+                                }
+                              }}
                               className="border-green-600 text-green-400"
                             >
                               <Video className="w-4 h-4 mr-1" />
@@ -608,6 +629,44 @@ export default function ContentEnginePage() {
                       </CardContent>
                     </Card>
                   ))}
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* ==================== VIDEO PREVIEW DIALOG ==================== */}
+        <Dialog open={videoPreviewOpen} onOpenChange={setVideoPreviewOpen}>
+          <DialogContent className="bg-slate-900 border-slate-700 max-w-3xl">
+            <DialogHeader>
+              <DialogTitle className="text-white">{selectedSpec?.title}</DialogTitle>
+              <DialogDescription className="text-slate-400">
+                Rendered video preview
+              </DialogDescription>
+            </DialogHeader>
+            {previewVideoUrl && (
+              <div className="py-4">
+                <video
+                  src={previewVideoUrl}
+                  controls
+                  autoPlay
+                  className="w-full rounded-lg bg-black"
+                  style={{ maxHeight: '60vh' }}
+                >
+                  Your browser does not support the video tag.
+                </video>
+                <div className="flex justify-between items-center mt-4">
+                  <p className="text-slate-500 text-sm">
+                    Duration: {selectedSpec?.targetDuration}s target
+                  </p>
+                  <a
+                    href={previewVideoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-purple-400 text-sm hover:underline"
+                  >
+                    Open in new tab
+                  </a>
                 </div>
               </div>
             )}

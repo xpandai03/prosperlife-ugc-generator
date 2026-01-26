@@ -2220,7 +2220,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
    */
   app.get("/api/ai/media", requireAuth, async (req, res) => {
     try {
-      const mediaAssets = await storage.getMediaAssetsByUser(req.userId!);
+      // Exclude Content Engine assets from UGC gallery (Jan 2026)
+      // Content Engine videos have sceneSpecId set and should be viewed in /content-engine
+      const mediaAssets = await storage.getMediaAssetsByUser(req.userId!, {
+        excludeContentEngine: true,
+      });
 
       res.json({
         success: true,

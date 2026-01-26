@@ -75,7 +75,7 @@ export interface IStorage {
   createMediaAsset(asset: InsertMediaAsset): Promise<MediaAsset>;
   getMediaAsset(id: string): Promise<MediaAsset | undefined>;
   updateMediaAsset(id: string, updates: Partial<Omit<MediaAsset, 'id' | 'createdAt'>>): Promise<MediaAsset | undefined>;
-  getMediaAssetsByUser(userId: string): Promise<MediaAsset[]>;
+  getMediaAssetsByUser(userId: string, options?: { excludeContentEngine?: boolean; contentEngineOnly?: boolean }): Promise<MediaAsset[]>;
   softDeleteMediaAsset(assetId: string, userId: string): Promise<MediaAsset | undefined>;
   rateMediaAsset(assetId: string, userId: string, rating: number): Promise<MediaAsset | undefined>;
 
@@ -306,16 +306,48 @@ export class DatabaseStorage implements IStorage {
     return updated || undefined;
   }
 
-  async getMediaAssetsByUser(userId: string): Promise<MediaAsset[]> {
+  async getMediaAssetsByUser(
+    userId: string,
+    options?: { excludeContentEngine?: boolean; contentEngineOnly?: boolean }
+  ): Promise<MediaAsset[]> {
     // Filter out soft-deleted assets (deletedAt IS NULL)
-    return db
+    // Optionally filter by Content Engine status via sceneSpecId
+    const conditions = [
+      eq(mediaAssets.userId, userId),
+      isNull(mediaAssets.deletedAt),
+    ];
+
+    // Content Engine filtering (Jan 2026)
+    if (options?.excludeContentEngine) {
+      // UGC Ads only - exclude assets with sceneSpecId
+      conditions.push(isNull(mediaAssets.sceneSpecId));
+    } else if (options?.contentEngineOnly) {
+      // Content Engine only - include only assets with sceneSpecId
+      // Note: We need to check for NOT NULL, which drizzle handles differently
+      // Using sql template for this case
+    }
+
+    let query = db
       .select()
       .from(mediaAssets)
-      .where(and(
-        eq(mediaAssets.userId, userId),
-        isNull(mediaAssets.deletedAt)
-      ))
+      .where(and(...conditions))
       .orderBy(desc(mediaAssets.createdAt));
+
+    // For contentEngineOnly, we need a different approach since drizzle doesn't have isNotNull
+    if (options?.contentEngineOnly) {
+      const { sql } = await import('drizzle-orm');
+      return db
+        .select()
+        .from(mediaAssets)
+        .where(and(
+          eq(mediaAssets.userId, userId),
+          isNull(mediaAssets.deletedAt),
+          sql`${mediaAssets.sceneSpecId} IS NOT NULL`
+        ))
+        .orderBy(desc(mediaAssets.createdAt));
+    }
+
+    return query;
   }
 
   // Soft delete a media asset (Dec 2025)
