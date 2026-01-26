@@ -74,6 +74,7 @@ export function Navbar() {
   const navLinksData = [
     { label: 'Clips', href: '/videos' },
     { label: 'Ads', href: '/ai-studio' },
+    { label: 'Engine', href: '/content-engine' },
     { label: 'Analytics', href: '/schedule' },
     { label: 'Socials', href: '/socials' },
   ];

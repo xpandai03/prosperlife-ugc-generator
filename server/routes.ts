@@ -3744,6 +3744,382 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ========================================
+  // CONTENT ENGINE API ENDPOINTS (Jan 2026)
+  // ========================================
+
+  // ---- Channel Configs ----
+
+  // POST /api/content-engine/configs - Create a new channel config
+  app.post('/api/content-engine/configs', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+
+      // Validate input
+      const configSchema = z.object({
+        name: z.string().min(1).max(100),
+        niche: z.string().min(1).max(500),
+        tone: z.string().min(1).max(500),
+        cadence: z.string().optional(),
+        rendererPreference: z.enum(['automation', 'code_based']).default('automation'),
+        defaultDuration: z.number().int().min(10).max(300).default(60),
+        extraDirectives: z.record(z.any()).optional(),
+        isActive: z.boolean().default(true),
+      });
+
+      const validation = configSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          details: validation.error.errors,
+        });
+      }
+
+      const config = await storage.createChannelConfig({
+        ...validation.data,
+        userId,
+      });
+
+      console.log('[Content Engine] Channel config created:', config.id);
+
+      res.status(201).json({ success: true, config });
+    } catch (error: any) {
+      console.error('[Content Engine] Error creating config:', error);
+      res.status(500).json({ error: 'Failed to create channel config', details: error.message });
+    }
+  });
+
+  // GET /api/content-engine/configs - Get all channel configs for user
+  app.get('/api/content-engine/configs', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+      const configs = await storage.getChannelConfigsByUser(userId);
+      res.json({ configs });
+    } catch (error: any) {
+      console.error('[Content Engine] Error fetching configs:', error);
+      res.status(500).json({ error: 'Failed to fetch channel configs', details: error.message });
+    }
+  });
+
+  // GET /api/content-engine/configs/:id - Get a specific channel config
+  app.get('/api/content-engine/configs/:id', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+      const config = await storage.getChannelConfig(req.params.id);
+
+      if (!config || config.userId !== userId) {
+        return res.status(404).json({ error: 'Channel config not found' });
+      }
+
+      res.json({ config });
+    } catch (error: any) {
+      console.error('[Content Engine] Error fetching config:', error);
+      res.status(500).json({ error: 'Failed to fetch channel config', details: error.message });
+    }
+  });
+
+  // PUT /api/content-engine/configs/:id - Update a channel config
+  app.put('/api/content-engine/configs/:id', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+
+      // Check ownership
+      const existing = await storage.getChannelConfig(req.params.id);
+      if (!existing || existing.userId !== userId) {
+        return res.status(404).json({ error: 'Channel config not found' });
+      }
+
+      // Validate input
+      const updateSchema = z.object({
+        name: z.string().min(1).max(100).optional(),
+        niche: z.string().min(1).max(500).optional(),
+        tone: z.string().min(1).max(500).optional(),
+        cadence: z.string().optional(),
+        rendererPreference: z.enum(['automation', 'code_based']).optional(),
+        defaultDuration: z.number().int().min(10).max(300).optional(),
+        extraDirectives: z.record(z.any()).optional(),
+        isActive: z.boolean().optional(),
+      });
+
+      const validation = updateSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          details: validation.error.errors,
+        });
+      }
+
+      const config = await storage.updateChannelConfig(req.params.id, validation.data);
+
+      res.json({ success: true, config });
+    } catch (error: any) {
+      console.error('[Content Engine] Error updating config:', error);
+      res.status(500).json({ error: 'Failed to update channel config', details: error.message });
+    }
+  });
+
+  // DELETE /api/content-engine/configs/:id - Delete a channel config
+  app.delete('/api/content-engine/configs/:id', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+      const deleted = await storage.deleteChannelConfig(req.params.id, userId);
+
+      if (!deleted) {
+        return res.status(404).json({ error: 'Channel config not found' });
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error('[Content Engine] Error deleting config:', error);
+      res.status(500).json({ error: 'Failed to delete channel config', details: error.message });
+    }
+  });
+
+  // ---- Scene Specs ----
+
+  // POST /api/content-engine/generate-spec - Generate a SceneSpec from a channel config
+  app.post('/api/content-engine/generate-spec', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+
+      // Validate input
+      const generateSchema = z.object({
+        channelConfigId: z.string().uuid(),
+        durationOverride: z.number().int().min(10).max(300).optional(),
+      });
+
+      const validation = generateSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          details: validation.error.errors,
+        });
+      }
+
+      const { channelConfigId, durationOverride } = validation.data;
+
+      // Get and verify ownership of channel config
+      const config = await storage.getChannelConfig(channelConfigId);
+      if (!config || config.userId !== userId) {
+        return res.status(404).json({ error: 'Channel config not found' });
+      }
+
+      // Generate SceneSpec using LLM
+      const { sceneSpecGenerator } = await import('./services/sceneSpecGenerator');
+      const result = await sceneSpecGenerator.generateFromConfig(config, durationOverride);
+
+      if (!result.success || !result.sceneSpec) {
+        return res.status(500).json({
+          error: 'Failed to generate SceneSpec',
+          details: result.error,
+        });
+      }
+
+      // Save to database
+      const sceneSpec = await storage.createSceneSpec({
+        channelConfigId,
+        userId,
+        status: 'draft',
+        title: result.sceneSpec.title,
+        description: result.sceneSpec.description,
+        tags: result.sceneSpec.tags,
+        targetDuration: result.sceneSpec.targetDuration,
+        scenes: result.sceneSpec.scenes,
+        rendererType: config.rendererPreference,
+        metadata: {
+          generationMetadata: result.metadata,
+        },
+      });
+
+      console.log('[Content Engine] SceneSpec generated:', sceneSpec.id);
+
+      res.status(201).json({
+        success: true,
+        sceneSpec,
+        generationMetadata: result.metadata,
+      });
+    } catch (error: any) {
+      console.error('[Content Engine] Error generating SceneSpec:', error);
+      res.status(500).json({ error: 'Failed to generate SceneSpec', details: error.message });
+    }
+  });
+
+  // GET /api/content-engine/specs - Get all scene specs for user
+  app.get('/api/content-engine/specs', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+      const specs = await storage.getSceneSpecsByUser(userId);
+      res.json({ specs });
+    } catch (error: any) {
+      console.error('[Content Engine] Error fetching specs:', error);
+      res.status(500).json({ error: 'Failed to fetch scene specs', details: error.message });
+    }
+  });
+
+  // GET /api/content-engine/specs/:id - Get a specific scene spec
+  app.get('/api/content-engine/specs/:id', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+      const spec = await storage.getSceneSpec(req.params.id);
+
+      if (!spec || spec.userId !== userId) {
+        return res.status(404).json({ error: 'Scene spec not found' });
+      }
+
+      res.json({ spec });
+    } catch (error: any) {
+      console.error('[Content Engine] Error fetching spec:', error);
+      res.status(500).json({ error: 'Failed to fetch scene spec', details: error.message });
+    }
+  });
+
+  // PUT /api/content-engine/specs/:id - Update a scene spec
+  app.put('/api/content-engine/specs/:id', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+
+      // Check ownership
+      const existing = await storage.getSceneSpec(req.params.id);
+      if (!existing || existing.userId !== userId) {
+        return res.status(404).json({ error: 'Scene spec not found' });
+      }
+
+      // Validate input
+      const updateSchema = z.object({
+        status: z.enum(['draft', 'approved', 'rendering', 'rendered', 'posted', 'failed']).optional(),
+        title: z.string().min(1).max(200).optional(),
+        description: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        scenes: z.array(z.object({
+          order: z.number(),
+          voiceoverText: z.string(),
+          visualIntent: z.string(),
+          durationHint: z.number().optional().nullable(),
+          styleHints: z.record(z.any()).optional().nullable(),
+        })).optional(),
+        metadata: z.record(z.any()).optional(),
+        errorMessage: z.string().optional().nullable(),
+      });
+
+      const validation = updateSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          details: validation.error.errors,
+        });
+      }
+
+      const spec = await storage.updateSceneSpec(req.params.id, validation.data);
+
+      res.json({ success: true, spec });
+    } catch (error: any) {
+      console.error('[Content Engine] Error updating spec:', error);
+      res.status(500).json({ error: 'Failed to update scene spec', details: error.message });
+    }
+  });
+
+  // DELETE /api/content-engine/specs/:id - Delete a scene spec
+  app.delete('/api/content-engine/specs/:id', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+      const deleted = await storage.deleteSceneSpec(req.params.id, userId);
+
+      if (!deleted) {
+        return res.status(404).json({ error: 'Scene spec not found' });
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error('[Content Engine] Error deleting spec:', error);
+      res.status(500).json({ error: 'Failed to delete scene spec', details: error.message });
+    }
+  });
+
+  // POST /api/content-engine/specs/:id/approve - Approve a scene spec for rendering
+  app.post('/api/content-engine/specs/:id/approve', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+
+      const existing = await storage.getSceneSpec(req.params.id);
+      if (!existing || existing.userId !== userId) {
+        return res.status(404).json({ error: 'Scene spec not found' });
+      }
+
+      if (existing.status !== 'draft') {
+        return res.status(400).json({ error: 'Only draft specs can be approved' });
+      }
+
+      const spec = await storage.updateSceneSpec(req.params.id, { status: 'approved' });
+
+      res.json({ success: true, spec });
+    } catch (error: any) {
+      console.error('[Content Engine] Error approving spec:', error);
+      res.status(500).json({ error: 'Failed to approve scene spec', details: error.message });
+    }
+  });
+
+  // POST /api/content-engine/render/:id - Render a scene spec into a video
+  app.post('/api/content-engine/render/:id', requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+
+      // Validate options
+      const optionsSchema = z.object({
+        provider: z.enum(['veo3', 'sora2']).optional(),
+        aspectRatio: z.string().optional(),
+        quality: z.enum(['fast', 'quality']).optional(),
+      });
+
+      const validation = optionsSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          details: validation.error.errors,
+        });
+      }
+
+      // Get and verify ownership
+      const sceneSpec = await storage.getSceneSpec(req.params.id);
+      if (!sceneSpec || sceneSpec.userId !== userId) {
+        return res.status(404).json({ error: 'Scene spec not found' });
+      }
+
+      // Check status - only approved or draft specs can be rendered
+      if (!['draft', 'approved'].includes(sceneSpec.status)) {
+        return res.status(400).json({
+          error: `Cannot render spec in status '${sceneSpec.status}'. Only draft or approved specs can be rendered.`,
+        });
+      }
+
+      console.log('[Content Engine] Starting render:', {
+        sceneSpecId: sceneSpec.id,
+        title: sceneSpec.title,
+        provider: validation.data.provider || 'veo3',
+      });
+
+      // Use automation renderer
+      const { automationRenderer } = await import('./services/renderers/automation');
+      const result = await automationRenderer.render(sceneSpec, validation.data);
+
+      if (!result.success) {
+        return res.status(500).json({
+          error: 'Render failed',
+          details: result.error,
+        });
+      }
+
+      res.status(202).json({
+        success: true,
+        message: 'Render started. Check the media asset for status.',
+        mediaAssetId: result.mediaAssetId,
+        metadata: result.metadata,
+      });
+    } catch (error: any) {
+      console.error('[Content Engine] Error rendering spec:', error);
+      res.status(500).json({ error: 'Failed to render scene spec', details: error.message });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

@@ -219,6 +219,57 @@ export const brandSettings = pgTable("brand_settings", {
   updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
 });
 
+// ============================================
+// CONTENT ENGINE (Jan 2026)
+// ============================================
+
+// Channel Configs - user's content direction settings
+export const channelConfigs = pgTable("channel_configs", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: text("name").notNull(), // channel/config name
+  niche: text("niche").notNull(), // content niche (e.g., "productivity tips")
+  tone: text("tone").notNull(), // voice/style (e.g., "casual, motivational")
+  cadence: text("cadence"), // posting frequency intent
+  rendererPreference: text("renderer_preference").notNull().default('automation'), // 'automation' | 'code_based'
+  defaultDuration: integer("default_duration").notNull().default(60), // default video length in seconds
+  extraDirectives: jsonb("extra_directives"), // additional LLM instructions
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+});
+
+// Scene Specs - canonical content specification object
+export const sceneSpecs = pgTable("scene_specs", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  channelConfigId: uuid("channel_config_id").notNull().references(() => channelConfigs.id, { onDelete: 'cascade' }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  // Status lifecycle: draft → approved → rendering → rendered → posted | failed
+  status: text("status").notNull().default('draft'), // 'draft' | 'approved' | 'rendering' | 'rendered' | 'posted' | 'failed'
+  // Video metadata
+  title: text("title").notNull(),
+  description: text("description"),
+  tags: jsonb("tags"), // array of tags
+  targetDuration: integer("target_duration").notNull(), // seconds
+  // Scenes array - the core content structure
+  scenes: jsonb("scenes").notNull(), // ordered array of scene objects
+  // Renderer info
+  rendererType: text("renderer_type").notNull().default('automation'), // 'automation' | 'code_based'
+  // Link to resulting media asset
+  mediaAssetId: text("media_asset_id").references(() => mediaAssets.id),
+  // Flexible metadata storage
+  metadata: jsonb("metadata"), // LLM reasoning, generation params, etc.
+  errorMessage: text("error_message"),
+  // Timestamps
+  createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  renderedAt: timestamp("rendered_at"),
+});
+
+// ============================================
+// END CONTENT ENGINE
+// ============================================
+
 // Media Assets table - tracks AI-generated media (Phase 4)
 export const mediaAssets = pgTable("media_assets", {
   id: text("id").primaryKey(),
@@ -257,6 +308,9 @@ export const mediaAssets = pgTable("media_assets", {
 
   // Soft Delete (Dec 2025)
   deletedAt: timestamp("deleted_at"), // Soft delete timestamp
+
+  // Content Engine (Jan 2026)
+  sceneSpecId: uuid("scene_spec_id"), // Link back to SceneSpec if generated via Content Engine
 
   // Timestamps
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
@@ -339,6 +393,30 @@ export const creditTransactionsRelations = relations(creditTransactions, ({ one 
   user: one(users, {
     fields: [creditTransactions.userId],
     references: [users.id],
+  }),
+}));
+
+// Content Engine relations
+export const channelConfigsRelations = relations(channelConfigs, ({ one, many }) => ({
+  user: one(users, {
+    fields: [channelConfigs.userId],
+    references: [users.id],
+  }),
+  sceneSpecs: many(sceneSpecs),
+}));
+
+export const sceneSpecsRelations = relations(sceneSpecs, ({ one }) => ({
+  user: one(users, {
+    fields: [sceneSpecs.userId],
+    references: [users.id],
+  }),
+  channelConfig: one(channelConfigs, {
+    fields: [sceneSpecs.channelConfigId],
+    references: [channelConfigs.id],
+  }),
+  mediaAsset: one(mediaAssets, {
+    fields: [sceneSpecs.mediaAssetId],
+    references: [mediaAssets.id],
   }),
 }));
 
@@ -446,6 +524,26 @@ export const insertStripeSettingsSchema = createInsertSchema(stripeSettings, {
   updatedAt: true,
 });
 
+// Content Engine insert schemas
+export const insertChannelConfigSchema = createInsertSchema(channelConfigs, {
+  createdAt: () => z.date().optional(),
+  updatedAt: () => z.date().optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertSceneSpecSchema = createInsertSchema(sceneSpecs, {
+  createdAt: () => z.date().optional(),
+  updatedAt: () => z.date().optional(),
+  renderedAt: () => z.date().optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -494,3 +592,19 @@ export type StripeSettings = typeof stripeSettings.$inferSelect;
 export type InsertStripeSettings = z.infer<typeof insertStripeSettingsSchema>;
 
 export type BrandSettings = typeof brandSettings.$inferSelect;
+
+// Content Engine types
+export type ChannelConfig = typeof channelConfigs.$inferSelect;
+export type InsertChannelConfig = z.infer<typeof insertChannelConfigSchema>;
+
+export type SceneSpec = typeof sceneSpecs.$inferSelect;
+export type InsertSceneSpec = z.infer<typeof insertSceneSpecSchema>;
+
+// Scene object structure (for use within scenes JSONB field)
+export interface SceneObject {
+  order: number;
+  voiceoverText: string;
+  visualIntent: string;
+  durationHint?: number | null;
+  styleHints?: Record<string, unknown> | null;
+}

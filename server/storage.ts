@@ -9,6 +9,8 @@ import {
   mediaAssets,
   stripeSettings,
   brandSettings,
+  channelConfigs,
+  sceneSpecs,
   type User,
   type InsertUser,
   type Task,
@@ -25,6 +27,10 @@ import {
   type InsertMediaAsset,
   type StripeSettings,
   type BrandSettings,
+  type ChannelConfig,
+  type InsertChannelConfig,
+  type SceneSpec,
+  type InsertSceneSpec,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, isNull } from "drizzle-orm";
@@ -80,6 +86,21 @@ export interface IStorage {
   // Brand Settings (White-label) - Dec 2025
   getBrandSettings(): Promise<BrandSettings | undefined>;
   updateBrandSettings(updates: Partial<Omit<BrandSettings, 'id' | 'createdAt' | 'updatedAt'>>): Promise<BrandSettings | undefined>;
+
+  // Content Engine - Channel Configs (Jan 2026)
+  createChannelConfig(config: InsertChannelConfig): Promise<ChannelConfig>;
+  getChannelConfig(id: string): Promise<ChannelConfig | undefined>;
+  getChannelConfigsByUser(userId: string): Promise<ChannelConfig[]>;
+  updateChannelConfig(id: string, updates: Partial<Omit<ChannelConfig, 'id' | 'createdAt'>>): Promise<ChannelConfig | undefined>;
+  deleteChannelConfig(id: string, userId: string): Promise<boolean>;
+
+  // Content Engine - Scene Specs (Jan 2026)
+  createSceneSpec(spec: InsertSceneSpec): Promise<SceneSpec>;
+  getSceneSpec(id: string): Promise<SceneSpec | undefined>;
+  getSceneSpecsByUser(userId: string): Promise<SceneSpec[]>;
+  getSceneSpecsByChannelConfig(channelConfigId: string): Promise<SceneSpec[]>;
+  updateSceneSpec(id: string, updates: Partial<Omit<SceneSpec, 'id' | 'createdAt'>>): Promise<SceneSpec | undefined>;
+  deleteSceneSpec(id: string, userId: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -392,6 +413,94 @@ export class DatabaseStorage implements IStorage {
       .where(eq(brandSettings.id, existingSettings.id))
       .returning();
     return updated || undefined;
+  }
+
+  // ==================== CONTENT ENGINE (Jan 2026) ====================
+
+  // Channel Configs
+  async createChannelConfig(config: InsertChannelConfig): Promise<ChannelConfig> {
+    const [created] = await db.insert(channelConfigs).values(config).returning();
+    return created;
+  }
+
+  async getChannelConfig(id: string): Promise<ChannelConfig | undefined> {
+    const [config] = await db.select().from(channelConfigs).where(eq(channelConfigs.id, id));
+    return config || undefined;
+  }
+
+  async getChannelConfigsByUser(userId: string): Promise<ChannelConfig[]> {
+    return db
+      .select()
+      .from(channelConfigs)
+      .where(eq(channelConfigs.userId, userId))
+      .orderBy(desc(channelConfigs.createdAt));
+  }
+
+  async updateChannelConfig(
+    id: string,
+    updates: Partial<Omit<ChannelConfig, 'id' | 'createdAt'>>
+  ): Promise<ChannelConfig | undefined> {
+    const [updated] = await db
+      .update(channelConfigs)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(channelConfigs.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteChannelConfig(id: string, userId: string): Promise<boolean> {
+    const result = await db
+      .delete(channelConfigs)
+      .where(and(eq(channelConfigs.id, id), eq(channelConfigs.userId, userId)))
+      .returning();
+    return result.length > 0;
+  }
+
+  // Scene Specs
+  async createSceneSpec(spec: InsertSceneSpec): Promise<SceneSpec> {
+    const [created] = await db.insert(sceneSpecs).values(spec).returning();
+    return created;
+  }
+
+  async getSceneSpec(id: string): Promise<SceneSpec | undefined> {
+    const [spec] = await db.select().from(sceneSpecs).where(eq(sceneSpecs.id, id));
+    return spec || undefined;
+  }
+
+  async getSceneSpecsByUser(userId: string): Promise<SceneSpec[]> {
+    return db
+      .select()
+      .from(sceneSpecs)
+      .where(eq(sceneSpecs.userId, userId))
+      .orderBy(desc(sceneSpecs.createdAt));
+  }
+
+  async getSceneSpecsByChannelConfig(channelConfigId: string): Promise<SceneSpec[]> {
+    return db
+      .select()
+      .from(sceneSpecs)
+      .where(eq(sceneSpecs.channelConfigId, channelConfigId))
+      .orderBy(desc(sceneSpecs.createdAt));
+  }
+
+  async updateSceneSpec(
+    id: string,
+    updates: Partial<Omit<SceneSpec, 'id' | 'createdAt'>>
+  ): Promise<SceneSpec | undefined> {
+    const [updated] = await db
+      .update(sceneSpecs)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(sceneSpecs.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteSceneSpec(id: string, userId: string): Promise<boolean> {
+    const result = await db
+      .delete(sceneSpecs)
+      .where(and(eq(sceneSpecs.id, id), eq(sceneSpecs.userId, userId)))
+      .returning();
+    return result.length > 0;
   }
 }
 
