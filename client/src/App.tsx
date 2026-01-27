@@ -19,6 +19,7 @@ import OAuthCallbackPage from "@/pages/OAuthCallbackPage";
 // import PricingPage from "@/pages/PricingPage"; // Hidden - credits system replaces subscription pricing
 import AIStudioPage from "@/pages/AIStudioPage";
 import ContentEnginePage from "@/pages/ContentEnginePage";
+import ContentEngineVideoPage from "@/pages/ContentEngineVideoPage";
 import ScheduleDashboard from "@/pages/ScheduleDashboard";
 import BillingSuccessPage from "@/pages/billing/SuccessPage";
 import BillingCancelPage from "@/pages/billing/CancelPage";
@@ -72,6 +73,11 @@ function Router() {
         <Route path="/content-engine">
           <ProtectedRoute>
             <ContentEnginePage />
+          </ProtectedRoute>
+        </Route>
+        <Route path="/content-engine/video/:id">
+          <ProtectedRoute>
+            <ContentEngineVideoPage />
           </ProtectedRoute>
         </Route>
         <Route path="/schedule">

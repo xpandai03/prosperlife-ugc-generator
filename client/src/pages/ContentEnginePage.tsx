@@ -132,9 +132,9 @@ export default function ContentEnginePage() {
   // Dialog states
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [specDetailOpen, setSpecDetailOpen] = useState(false);
-  const [videoPreviewOpen, setVideoPreviewOpen] = useState(false);
+  const [renderConfirmOpen, setRenderConfirmOpen] = useState(false);
   const [selectedSpec, setSelectedSpec] = useState<SceneSpec | null>(null);
-  const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
+  const [specToRender, setSpecToRender] = useState<SceneSpec | null>(null);
 
   // Form states for new config
   const [newConfig, setNewConfig] = useState({
@@ -142,9 +142,15 @@ export default function ContentEnginePage() {
     niche: '',
     tone: '',
     cadence: '',
-    defaultDuration: 20, // Max provider limit
-    rendererPreference: 'automation' as const,
+    defaultDuration: 300, // 5 minutes default for long-form
+    rendererPreference: 'remotion' as const, // Remotion for long-form
   });
+
+  // Credit cost calculation (30 credits per minute)
+  const calculateCredits = (durationSeconds: number) => {
+    const minutes = durationSeconds / 60;
+    return Math.max(90, Math.ceil(minutes * 30)); // Min 90 credits (3 min)
+  };
 
   // Selected config for generation
   const [selectedConfigId, setSelectedConfigId] = useState<string>('');
@@ -223,7 +229,7 @@ export default function ContentEnginePage() {
     },
   });
 
-  // Render SceneSpec
+  // Render SceneSpec (uses Remotion for long-form by default)
   const renderSpecMutation = useMutation({
     mutationFn: async (specId: string) => {
       const authHeaders = await getAuthHeaders();
@@ -233,17 +239,21 @@ export default function ContentEnginePage() {
           'Content-Type': 'application/json',
           ...authHeaders,
         },
-        body: JSON.stringify({ provider: 'veo3' }),
+        body: JSON.stringify({ renderer: 'remotion' }), // Use Remotion for long-form
       });
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || 'Failed to start render');
+        // Handle insufficient credits specifically
+        if (response.status === 402) {
+          throw new Error(`Insufficient credits: ${error.details || 'Please purchase more credits.'}`);
+        }
+        throw new Error(error.error || error.details || 'Failed to start render');
       }
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/content-engine/specs'] });
-      toast({ title: 'Render started', description: 'Video rendering has begun. This may take a few minutes.' });
+      toast({ title: 'Render started', description: 'Video rendering has begun. This may take several minutes for long-form content.' });
     },
     onError: (error: Error) => {
       toast({ title: 'Render failed', description: error.message, variant: 'destructive' });
@@ -362,7 +372,7 @@ export default function ContentEnginePage() {
                       />
                     </div>
                     <div>
-                      <Label className="text-slate-300">Default Duration (seconds)</Label>
+                      <Label className="text-slate-300">Default Duration</Label>
                       <Select
                         value={String(newConfig.defaultDuration)}
                         onValueChange={(v) => setNewConfig({ ...newConfig, defaultDuration: parseInt(v) })}
@@ -371,12 +381,13 @@ export default function ContentEnginePage() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent className="bg-slate-800 border-slate-700">
-                          <SelectItem value="10">10 seconds</SelectItem>
-                          <SelectItem value="15">15 seconds</SelectItem>
-                          <SelectItem value="20">20 seconds (max)</SelectItem>
+                          <SelectItem value="180">3 minutes (90 credits)</SelectItem>
+                          <SelectItem value="300">5 minutes (150 credits)</SelectItem>
+                          <SelectItem value="420">7 minutes (210 credits)</SelectItem>
+                          <SelectItem value="600">10 minutes (300 credits)</SelectItem>
                         </SelectContent>
                       </Select>
-                      <p className="text-xs text-slate-500 mt-1">Provider limit: max 20s per video</p>
+                      <p className="text-xs text-slate-500 mt-1">Long-form content: 3-10 minutes</p>
                     </div>
                   </div>
                   <DialogFooter>
@@ -525,7 +536,10 @@ export default function ContentEnginePage() {
                           {['draft', 'approved'].includes(spec.status) && (
                             <Button
                               size="sm"
-                              onClick={() => renderSpecMutation.mutate(spec.id)}
+                              onClick={() => {
+                                setSpecToRender(spec);
+                                setRenderConfirmOpen(true);
+                              }}
                               disabled={renderSpecMutation.isPending}
                               className="bg-green-600 hover:bg-green-700"
                             >
@@ -541,25 +555,9 @@ export default function ContentEnginePage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={async () => {
-                                // Fetch the media asset to get the video URL
-                                try {
-                                  const authHeaders = await getAuthHeaders();
-                                  const response = await fetch(`/api/ai/media/${spec.mediaAssetId}`, {
-                                    headers: authHeaders,
-                                  });
-                                  if (response.ok) {
-                                    const data = await response.json();
-                                    if (data.asset?.resultUrl) {
-                                      setPreviewVideoUrl(data.asset.resultUrl);
-                                      setSelectedSpec(spec);
-                                      setVideoPreviewOpen(true);
-                                    }
-                                  }
-                                } catch (error) {
-                                  console.error('Failed to fetch video:', error);
-                                  toast({ title: 'Error', description: 'Failed to load video', variant: 'destructive' });
-                                }
+                              onClick={() => {
+                                // Navigate to dedicated video viewer page
+                                window.location.href = `/content-engine/video/${spec.mediaAssetId}`;
                               }}
                               className="border-green-600 text-green-400"
                             >
@@ -635,41 +633,67 @@ export default function ContentEnginePage() {
           </DialogContent>
         </Dialog>
 
-        {/* ==================== VIDEO PREVIEW DIALOG ==================== */}
-        <Dialog open={videoPreviewOpen} onOpenChange={setVideoPreviewOpen}>
-          <DialogContent className="bg-slate-900 border-slate-700 max-w-3xl">
+        {/* ==================== RENDER CONFIRMATION DIALOG ==================== */}
+        <Dialog open={renderConfirmOpen} onOpenChange={setRenderConfirmOpen}>
+          <DialogContent className="bg-slate-900 border-slate-700 max-w-md">
             <DialogHeader>
-              <DialogTitle className="text-white">{selectedSpec?.title}</DialogTitle>
+              <DialogTitle className="text-white">Confirm Render</DialogTitle>
               <DialogDescription className="text-slate-400">
-                Rendered video preview
+                You are about to render a long-form video. This action will deduct credits from your account.
               </DialogDescription>
             </DialogHeader>
-            {previewVideoUrl && (
-              <div className="py-4">
-                <video
-                  src={previewVideoUrl}
-                  controls
-                  autoPlay
-                  className="w-full rounded-lg bg-black"
-                  style={{ maxHeight: '60vh' }}
-                >
-                  Your browser does not support the video tag.
-                </video>
-                <div className="flex justify-between items-center mt-4">
-                  <p className="text-slate-500 text-sm">
-                    Duration: {selectedSpec?.targetDuration}s target
+            {specToRender && (
+              <div className="py-4 space-y-4">
+                <div className="bg-slate-800 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-2">{specToRender.title}</h4>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="text-slate-400">Duration:</div>
+                    <div className="text-white">{Math.round(specToRender.targetDuration / 60)} minutes</div>
+                    <div className="text-slate-400">Scenes:</div>
+                    <div className="text-white">{specToRender.scenes?.length || 0}</div>
+                    <div className="text-slate-400">Credit Cost:</div>
+                    <div className="text-yellow-400 font-medium">
+                      {calculateCredits(specToRender.targetDuration)} credits
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-amber-900/30 border border-amber-600/50 rounded-lg p-3">
+                  <p className="text-amber-200 text-sm">
+                    <strong>Note:</strong> This render cannot be undone. Credits will be deducted immediately.
                   </p>
-                  <a
-                    href={previewVideoUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-purple-400 text-sm hover:underline"
-                  >
-                    Open in new tab
-                  </a>
                 </div>
               </div>
             )}
+            <DialogFooter className="gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setRenderConfirmOpen(false);
+                  setSpecToRender(null);
+                }}
+                className="border-slate-600 text-slate-300"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  if (specToRender) {
+                    renderSpecMutation.mutate(specToRender.id);
+                    setRenderConfirmOpen(false);
+                    setSpecToRender(null);
+                  }
+                }}
+                disabled={renderSpecMutation.isPending}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                {renderSpecMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Play className="w-4 h-4 mr-2" />
+                )}
+                Confirm Render
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>

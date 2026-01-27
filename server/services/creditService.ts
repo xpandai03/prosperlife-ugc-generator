@@ -507,3 +507,82 @@ export type CreditPackage = typeof CREDIT_PACKAGES[number];
 export function getCreditPackage(packageId: string): CreditPackage | undefined {
   return CREDIT_PACKAGES.find((p) => p.id === packageId);
 }
+
+// ==================== CONTENT ENGINE CREDITS (Jan 2026) ====================
+
+/**
+ * Content Engine credit costs (per minute of video)
+ * Long-form video rendering is more expensive than short-form UGC
+ */
+export const CONTENT_ENGINE_CREDITS = {
+  // Base cost per minute of video
+  perMinute: 30,
+  // Minimum credits (3-minute video)
+  minimum: 90,
+  // Maximum credits (10-minute video)
+  maximum: 300,
+} as const;
+
+/**
+ * Calculate credit cost for a Content Engine render
+ * Based on target duration in seconds
+ */
+export function calculateContentEngineCredits(durationSeconds: number): number {
+  const durationMinutes = durationSeconds / 60;
+  const cost = Math.ceil(durationMinutes * CONTENT_ENGINE_CREDITS.perMinute);
+  
+  // Enforce min/max bounds
+  return Math.max(
+    CONTENT_ENGINE_CREDITS.minimum,
+    Math.min(cost, CONTENT_ENGINE_CREDITS.maximum)
+  );
+}
+
+/**
+ * Check if user has enough credits for Content Engine render
+ */
+export async function checkContentEngineCredits(
+  userId: string,
+  durationSeconds: number
+): Promise<{
+  hasEnough: boolean;
+  balance: number;
+  required: number;
+  durationMinutes: number;
+}> {
+  const balance = await getBalance(userId);
+  const required = calculateContentEngineCredits(durationSeconds);
+  const durationMinutes = Math.round(durationSeconds / 60);
+
+  return {
+    hasEnough: balance >= required,
+    balance,
+    required,
+    durationMinutes,
+  };
+}
+
+/**
+ * Deduct credits for Content Engine render
+ */
+export async function deductContentEngineCredits(
+  userId: string,
+  durationSeconds: number,
+  sceneSpecId: string,
+  title: string
+): Promise<CreditTransaction | null> {
+  const cost = calculateContentEngineCredits(durationSeconds);
+  const durationMinutes = Math.round(durationSeconds / 60);
+  
+  return deductCreditsAmount(
+    userId,
+    cost,
+    `Content Engine: ${title} (${durationMinutes} min)`,
+    {
+      type: 'content_engine_render',
+      sceneSpecId,
+      durationSeconds,
+      durationMinutes,
+    }
+  );
+}

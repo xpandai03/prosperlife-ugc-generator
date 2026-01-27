@@ -4067,11 +4067,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.userId!;
 
-      // Validate options
+      // Validate options - supports both automation (KIE) and remotion (long-form)
       const optionsSchema = z.object({
+        // Automation renderer options
         provider: z.enum(['veo3', 'sora2']).optional(),
         aspectRatio: z.string().optional(),
         quality: z.enum(['fast', 'quality']).optional(),
+        // Remotion renderer options
+        fps: z.number().optional(),
+        width: z.number().optional(),
+        height: z.number().optional(),
+        // Renderer selection (override SceneSpec.rendererType)
+        renderer: z.enum(['automation', 'remotion']).optional(),
       });
 
       const validation = optionsSchema.safeParse(req.body);
@@ -4095,15 +4102,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Determine which renderer to use:
+      // 1. Explicit renderer option in request body
+      // 2. SceneSpec.rendererType
+      // 3. Duration-based: >= 180s uses Remotion, < 180s uses Automation
+      const requestedRenderer = validation.data.renderer;
+      const specRenderer = sceneSpec.rendererType;
+      const isLongForm = sceneSpec.targetDuration >= 180; // 3+ minutes
+
+      let useRemotionRenderer = false;
+      if (requestedRenderer === 'remotion') {
+        useRemotionRenderer = true;
+      } else if (requestedRenderer === 'automation') {
+        useRemotionRenderer = false;
+      } else if (specRenderer === 'remotion' || specRenderer === 'code_based') {
+        useRemotionRenderer = true;
+      } else if (isLongForm) {
+        useRemotionRenderer = true;
+      }
+
+      // Credit check for Remotion renders (long-form is expensive)
+      if (useRemotionRenderer) {
+        const {
+          checkContentEngineCredits,
+          deductContentEngineCredits,
+        } = await import('./services/creditService');
+
+        const creditCheck = await checkContentEngineCredits(userId, sceneSpec.targetDuration);
+        
+        if (!creditCheck.hasEnough) {
+          return res.status(402).json({
+            error: 'Insufficient credits',
+            details: `Content Engine render requires ${creditCheck.required} credits. You have ${creditCheck.balance} credits.`,
+            required: creditCheck.required,
+            balance: creditCheck.balance,
+            durationMinutes: creditCheck.durationMinutes,
+          });
+        }
+
+        // Deduct credits before starting render
+        const transaction = await deductContentEngineCredits(
+          userId,
+          sceneSpec.targetDuration,
+          sceneSpec.id,
+          sceneSpec.title
+        );
+
+        if (!transaction) {
+          return res.status(402).json({
+            error: 'Failed to deduct credits',
+            details: 'Credit transaction failed. Please try again.',
+          });
+        }
+
+        console.log('[Content Engine] Credits deducted:', {
+          userId,
+          amount: creditCheck.required,
+          newBalance: transaction.balanceAfter,
+        });
+      }
+
       console.log('[Content Engine] Starting render:', {
         sceneSpecId: sceneSpec.id,
         title: sceneSpec.title,
-        provider: validation.data.provider || 'veo3',
+        duration: sceneSpec.targetDuration,
+        renderer: useRemotionRenderer ? 'remotion' : 'automation',
+        specRenderer,
+        requestedRenderer,
       });
 
-      // Use automation renderer
-      const { automationRenderer } = await import('./services/renderers/automation');
-      const result = await automationRenderer.render(sceneSpec, validation.data);
+      let result;
+      if (useRemotionRenderer) {
+        // Remotion renderer for long-form content (3-10 minutes)
+        const { remotionRenderer } = await import('./services/renderers/remotion');
+        result = await remotionRenderer.render(sceneSpec, {
+          fps: validation.data.fps,
+          width: validation.data.width,
+          height: validation.data.height,
+        });
+      } else {
+        // Automation renderer for short-form content (UGC/Ads)
+        const { automationRenderer } = await import('./services/renderers/automation');
+        result = await automationRenderer.render(sceneSpec, validation.data);
+      }
 
       if (!result.success) {
         return res.status(500).json({
@@ -4117,6 +4198,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: 'Render started. Check the media asset for status.',
         mediaAssetId: result.mediaAssetId,
         metadata: result.metadata,
+        renderer: useRemotionRenderer ? 'remotion' : 'automation',
       });
     } catch (error: any) {
       console.error('[Content Engine] Error rendering spec:', error);

@@ -1,0 +1,43 @@
+# Docker Compose for Content Engine Remotion Render Worker
+# Run with: docker-compose up -d
+
+version: '3.8'
+
+services:
+  # Remotion Render Worker
+  render-worker:
+    build:
+      context: ./render-worker
+      dockerfile: Dockerfile
+    container_name: remotion-render-worker
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - NODE_ENV=production
+      - KIE_API_KEY=${KIE_API_KEY}
+      - KIE_UPLOAD_URL=${KIE_UPLOAD_URL:-https://kieai.redpandaai.co}
+    volumes:
+      # Persist job data between restarts (optional for debugging)
+      - render-jobs:/app/jobs
+      - render-output:/app/output
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    # Resource limits for rendering
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+
+volumes:
+  render-jobs:
+  render-output:

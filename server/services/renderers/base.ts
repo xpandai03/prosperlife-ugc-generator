@@ -28,9 +28,20 @@ export interface RenderResult {
  * Options for rendering
  */
 export interface RenderOptions {
-  provider?: 'veo3' | 'sora2'; // Default: veo3
+  provider?: 'veo3' | 'sora2'; // Default: veo3 (for automation renderer)
   aspectRatio?: string; // Default: 9:16 (vertical for shorts)
   quality?: 'fast' | 'quality'; // Default: quality
+}
+
+/**
+ * Options for Remotion rendering (Content Engine long-form)
+ */
+export interface RemotionRenderOptions {
+  fps?: number; // Default: 30
+  width?: number; // Default: 1080
+  height?: number; // Default: 1920 (9:16 portrait)
+  codec?: 'h264' | 'h265'; // Default: h264
+  crf?: number; // Quality (0-51, lower = better). Default: 23
 }
 
 /**
