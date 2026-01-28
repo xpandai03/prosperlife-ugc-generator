@@ -10,6 +10,7 @@ import { stripeService } from "./services/stripe";
 import { postToSocialSchema } from "./validators/social";
 import { generateMediaSchema, validateProviderType } from "./validators/mediaGen";
 import { generateMedia, checkMediaStatus } from "./services/mediaGen";
+import { ugcVideoService } from "./services/ugcVideoService";
 import { GenerationMode, generatePrompt, formatICPForPrompt, formatSceneForPrompt, type PromptVariables } from "./prompts/ugc-presets";
 import { ugcChainService } from "./services/ugcChain";
 import { supabaseAdmin } from "./services/supabaseAuth";
@@ -4204,6 +4205,156 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error('[Content Engine] Error rendering spec:', error);
       res.status(500).json({ error: 'Failed to render scene spec', details: error.message });
+    }
+  });
+
+  // ==================== UGC VIDEO GENERATION (Jan 2026) ====================
+
+  // Validation schema for UGC video generation
+  const generateUGCVideoSchema = z.object({
+    productName: z.string().min(1).max(100),
+    productFeatures: z.string().min(10).max(2000),
+    productImages: z.array(z.string().url()).min(2, "Minimum 2 product images required").max(4, "Maximum 4 product images allowed"),
+    hookText: z.string().max(100).optional(),
+    ctaText: z.string().max(50).optional(),
+    includeAvatar: z.boolean().optional().default(false),
+    avatarPrompt: z.string().max(500).optional(),
+    logoUrl: z.string().url().optional(),
+  });
+
+  const generateUGCBatchSchema = z.object({
+    videos: z.array(generateUGCVideoSchema).min(1).max(10, "Maximum 10 videos per batch"),
+  });
+
+  /**
+   * POST /api/ugc/generate - Generate a single UGC video
+   *
+   * Creates a 30-45 second UGC video from product information.
+   * Returns 202 with assetId for polling via GET /api/ai/media/:assetId
+   */
+  app.post("/api/ugc/generate", requireAuth, async (req, res) => {
+    try {
+      const validation = generateUGCVideoSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          details: validation.error.errors,
+        });
+      }
+
+      const userId = req.userId!;
+
+      console.log(`[UGC API] Generate request from user ${userId}`);
+
+      const result = await ugcVideoService.generateUGCVideo({
+        userId,
+        ...validation.data,
+      });
+
+      if (!result.success) {
+        return res.status(500).json({
+          error: result.error || 'Failed to start video generation',
+        });
+      }
+
+      res.status(202).json({
+        success: true,
+        assetId: result.assetId,
+        status: 'processing',
+        message: 'Video generation started. Poll GET /api/ai/media/:assetId for status.',
+      });
+    } catch (error: any) {
+      console.error('[UGC API] Error in generate:', error);
+      res.status(500).json({
+        error: 'Internal server error',
+        details: error.message,
+      });
+    }
+  });
+
+  /**
+   * POST /api/ugc/generate/batch - Generate multiple UGC videos
+   *
+   * Creates multiple UGC videos with concurrency limiting.
+   * Returns 202 with batchId and array of assetIds.
+   */
+  app.post("/api/ugc/generate/batch", requireAuth, async (req, res) => {
+    try {
+      const validation = generateUGCBatchSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          details: validation.error.errors,
+        });
+      }
+
+      const userId = req.userId!;
+
+      const { videos } = validation.data;
+      console.log(`[UGC API] Batch generate request from user ${userId}: ${videos.length} videos`);
+
+      const batchId = uuidv4();
+      const assetIds: string[] = [];
+      const errors: { index: number; error: string }[] = [];
+
+      // Start all videos (they process in parallel with internal concurrency limiting)
+      for (let i = 0; i < videos.length; i++) {
+        const video = videos[i];
+        const result = await ugcVideoService.generateUGCVideo({
+          userId,
+          ...video,
+        });
+
+        if (result.success && result.assetId) {
+          assetIds.push(result.assetId);
+        } else {
+          errors.push({ index: i, error: result.error || 'Unknown error' });
+        }
+      }
+
+      res.status(202).json({
+        success: true,
+        batchId,
+        assetIds,
+        totalRequested: videos.length,
+        totalStarted: assetIds.length,
+        errors: errors.length > 0 ? errors : undefined,
+        message: `Started ${assetIds.length}/${videos.length} videos. Poll individual assets for status.`,
+      });
+    } catch (error: any) {
+      console.error('[UGC API] Error in batch generate:', error);
+      res.status(500).json({
+        error: 'Internal server error',
+        details: error.message,
+      });
+    }
+  });
+
+  /**
+   * GET /api/ugc/status/:assetId - Get UGC video generation status
+   *
+   * Convenience endpoint that redirects to the standard media asset endpoint.
+   * Kept for consistency with the UGC API namespace.
+   */
+  app.get("/api/ugc/status/:assetId", requireAuth, async (req, res) => {
+    try {
+      const { assetId } = req.params;
+      const status = await ugcVideoService.getUGCVideoStatus(assetId);
+
+      if (status.status === 'not_found') {
+        return res.status(404).json({ error: 'Asset not found' });
+      }
+
+      res.json({
+        assetId,
+        ...status,
+      });
+    } catch (error: any) {
+      console.error('[UGC API] Error in status check:', error);
+      res.status(500).json({
+        error: 'Internal server error',
+        details: error.message,
+      });
     }
   });
 
