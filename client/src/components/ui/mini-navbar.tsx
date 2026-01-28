@@ -75,6 +75,7 @@ export function Navbar() {
     { label: 'Clips', href: '/videos' },
     { label: 'Ads', href: '/ai-studio' },
     { label: 'Engine', href: '/content-engine' },
+    { label: 'Autopilot', href: '/autopilot' },
     { label: 'Analytics', href: '/schedule' },
     { label: 'Socials', href: '/socials' },
   ];
