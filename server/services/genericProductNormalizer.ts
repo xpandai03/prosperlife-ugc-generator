@@ -270,10 +270,13 @@ export async function normalizeProduct(
       console.log(`[Normalizer] No JSON-LD offers found`);
     }
 
-    // Priority 2: OpenGraph price (some sites use this)
-    if (!price && og['price:amount']) {
-      price = formatPrice(og['price:amount'], og['price:currency'] || 'USD');
-      console.log(`[Normalizer] Price from OG tags: ${price}`);
+    // Priority 2: OpenGraph/Product price meta tags
+    // Check various OG price tag formats
+    const ogPriceAmount = og['price:amount'] || og['product:price:amount'];
+    const ogPriceCurrency = og['price:currency'] || og['product:price:currency'] || 'USD';
+    if (!price && ogPriceAmount) {
+      price = formatPrice(ogPriceAmount, ogPriceCurrency);
+      console.log(`[Normalizer] Price from OG/product tags: ${price}`);
     }
 
     // Priority 3: Extract from text (least reliable)

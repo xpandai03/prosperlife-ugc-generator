@@ -223,9 +223,9 @@ function parseHtml(html: string, url: string): ApifyCrawlResult {
     metadata.description = decodeHtmlEntities(descMatch[1]);
   }
 
-  // Extract OpenGraph tags
-  const ogRegex = /<meta[^>]*property=["'](og:[^"']*)["'][^>]*content=["']([^"']*)["']/gi;
-  const ogRegex2 = /<meta[^>]*content=["']([^"']*)["'][^>]*property=["'](og:[^"']*)["']/gi;
+  // Extract OpenGraph and product meta tags (og:*, product:*)
+  const ogRegex = /<meta[^>]*property=["']((?:og|product):[^"']*)["'][^>]*content=["']([^"']*)["']/gi;
+  const ogRegex2 = /<meta[^>]*content=["']([^"']*)["'][^>]*property=["']((?:og|product):[^"']*)["']/gi;
 
   let match;
   while ((match = ogRegex.exec(html)) !== null) {
@@ -367,7 +367,7 @@ function isValidImageUrl(url: string): boolean {
 }
 
 /**
- * Extract OpenGraph data as a key-value map
+ * Extract OpenGraph and product meta data as a key-value map
  */
 export function extractOpenGraph(
   metadata: ApifyCrawlResult['metadata']
@@ -378,9 +378,14 @@ export function extractOpenGraph(
 
   for (const item of metadata.openGraph) {
     if (item.property && item.content) {
-      // Remove 'og:' prefix for cleaner access
-      const key = item.property.replace(/^og:/, '');
-      og[key] = item.content;
+      // Store with both full key and without prefix for flexibility
+      // og:image -> 'image' and 'og:image'
+      // product:price:amount -> 'product:price:amount'
+      if (item.property.startsWith('og:')) {
+        const shortKey = item.property.replace(/^og:/, '');
+        og[shortKey] = item.content;
+      }
+      og[item.property] = item.content;
     }
   }
 
