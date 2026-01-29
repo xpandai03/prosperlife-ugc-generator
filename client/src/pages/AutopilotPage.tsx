@@ -2,7 +2,7 @@
  * Autopilot Page (Jan 2026)
  *
  * Supports two ingestion modes:
- * 1. Generic URL (Demo Mode) - Any product page via Apify crawler
+ * 1. Generic URL (Demo Mode) - Any product page via direct crawl
  * 2. Shopify Store - Full store integration
  */
 
@@ -14,7 +14,6 @@ import { WaveBackground } from "@/components/ui/wave-background";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   Tabs,
@@ -34,6 +33,11 @@ import {
   Image as ImageIcon,
   Sparkles,
   AlertCircle,
+  Video,
+  ArrowRight,
+  Package,
+  Palette,
+  Upload,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -67,6 +71,68 @@ interface AutopilotStore {
   status: string;
   lastScrapedAt?: string;
   createdAt: string;
+}
+
+// ==================== WORKFLOW PIPELINE ====================
+
+function WorkflowPipeline({ currentStep }: { currentStep: number }) {
+  const steps = [
+    { icon: Package, label: "Import Product", description: "Add product URL" },
+    { icon: Palette, label: "Choose Style", description: "Select video tone" },
+    { icon: Video, label: "Generate Video", description: "AI creates demo" },
+    { icon: Upload, label: "Publish", description: "Post to socials" },
+  ];
+
+  return (
+    <div className="mb-8 p-6 bg-slate-800/30 rounded-xl border border-slate-700">
+      <div className="flex items-center justify-between">
+        {steps.map((step, index) => {
+          const Icon = step.icon;
+          const isActive = index === currentStep;
+          const isComplete = index < currentStep;
+
+          return (
+            <div key={index} className="flex items-center flex-1">
+              <div className="flex flex-col items-center text-center flex-1">
+                <div
+                  className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 transition-all ${
+                    isComplete
+                      ? "bg-green-600 text-white"
+                      : isActive
+                      ? "bg-yellow-500 text-black ring-4 ring-yellow-500/30"
+                      : "bg-slate-700 text-slate-400"
+                  }`}
+                >
+                  {isComplete ? (
+                    <CheckCircle className="w-6 h-6" />
+                  ) : (
+                    <Icon className="w-6 h-6" />
+                  )}
+                </div>
+                <span
+                  className={`text-sm font-medium ${
+                    isActive ? "text-yellow-400" : isComplete ? "text-green-400" : "text-slate-400"
+                  }`}
+                >
+                  {step.label}
+                </span>
+                <span className="text-xs text-slate-500 mt-1">{step.description}</span>
+              </div>
+              {index < steps.length - 1 && (
+                <div className="flex-shrink-0 px-2">
+                  <ArrowRight
+                    className={`w-5 h-5 ${
+                      index < currentStep ? "text-green-500" : "text-slate-600"
+                    }`}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // ==================== MAIN COMPONENT ====================
@@ -185,14 +251,22 @@ export default function AutopilotPage() {
   const genericProducts = genericProductsData?.products || [];
   const stores = storesData?.stores || [];
 
+  // Calculate current workflow step
+  const getCurrentStep = () => {
+    if (genericProducts.length === 0) return 0; // Need to import
+    // For now, once we have products, we're on step 1 (choose style)
+    // TODO: Track video generation status
+    return 1;
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
       <WaveBackground />
 
       <div className="relative z-10 container mx-auto px-4 py-8 max-w-5xl pt-24">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2 flex items-center gap-2">
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold text-white mb-2 flex items-center gap-3">
             <Zap className="w-8 h-8 text-yellow-400" />
             Autopilot
           </h1>
@@ -200,6 +274,9 @@ export default function AutopilotPage() {
             Import products from any URL and generate AI-powered demo videos.
           </p>
         </div>
+
+        {/* Workflow Pipeline */}
+        <WorkflowPipeline currentStep={getCurrentStep()} />
 
         {/* Mode Selection Tabs */}
         <Tabs value={mode} onValueChange={(v) => setMode(v as "generic" | "shopify")} className="space-y-6">
@@ -265,8 +342,8 @@ export default function AutopilotPage() {
                     <div className="flex items-center gap-3 text-slate-300">
                       <Loader2 className="w-5 h-5 animate-spin text-yellow-400" />
                       <div>
-                        <p className="font-medium">Crawling page with AI...</p>
-                        <p className="text-sm text-slate-500">This may take 15-30 seconds</p>
+                        <p className="font-medium">Crawling page...</p>
+                        <p className="text-sm text-slate-500">Extracting product data (5-15 seconds)</p>
                       </div>
                     </div>
                   </div>
@@ -301,7 +378,7 @@ export default function AutopilotPage() {
                     {genericProducts.map((product) => (
                       <div
                         key={product.id}
-                        className="flex gap-4 p-4 bg-slate-900/50 rounded-lg border border-slate-700"
+                        className="flex gap-4 p-4 bg-slate-900/50 rounded-lg border border-slate-700 hover:border-slate-600 transition-colors"
                       >
                         {/* Product Image */}
                         <div className="flex-shrink-0">
@@ -309,10 +386,13 @@ export default function AutopilotPage() {
                             <img
                               src={product.images[0]}
                               alt=""
-                              className="w-24 h-24 rounded-lg object-cover"
+                              className="w-28 h-28 rounded-lg object-cover"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = 'none';
+                              }}
                             />
                           ) : (
-                            <div className="w-24 h-24 rounded-lg bg-slate-700 flex items-center justify-center">
+                            <div className="w-28 h-28 rounded-lg bg-slate-700 flex items-center justify-center">
                               <ImageIcon className="w-8 h-8 text-slate-500" />
                             </div>
                           )}
@@ -322,51 +402,53 @@ export default function AutopilotPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-start justify-between gap-2">
                             <div>
-                              <h3 className="text-white font-medium truncate">{product.title}</h3>
+                              <h3 className="text-white font-medium">{product.title}</h3>
                               <p className="text-slate-400 text-sm mt-1 line-clamp-2">
-                                {product.description || "No description"}
+                                {product.description || "No description available"}
                               </p>
-                            </div>
-                            <div className="flex items-center gap-2 flex-shrink-0">
-                              <Badge
-                                variant={
-                                  product.dataQuality === "high"
-                                    ? "default"
-                                    : product.dataQuality === "medium"
-                                    ? "secondary"
-                                    : "outline"
-                                }
-                                className={
-                                  product.dataQuality === "high"
-                                    ? "bg-green-600"
-                                    : product.dataQuality === "medium"
-                                    ? "bg-yellow-600"
-                                    : ""
-                                }
-                              >
-                                {product.dataQuality || "unknown"} quality
-                              </Badge>
                             </div>
                           </div>
 
                           {/* Meta info */}
                           <div className="flex items-center gap-4 mt-3 text-sm">
                             {product.price && (
-                              <span className="text-green-400 font-medium">{product.price}</span>
+                              <span className="text-green-400 font-semibold text-base">{product.price}</span>
                             )}
                             <span className="text-slate-500">
-                              {product.images.length} images
+                              {product.images.length} image{product.images.length !== 1 ? "s" : ""}
                             </span>
                             <span className="text-slate-500">
-                              {product.benefits?.length || 0} benefits
+                              {product.benefits?.length || 0} benefit{(product.benefits?.length || 0) !== 1 ? "s" : ""}
                             </span>
-                            <span className="text-slate-500">
-                              {formatDistanceToNow(new Date(product.createdAt), { addSuffix: true })}
-                            </span>
+                            <Badge
+                              variant="outline"
+                              className={
+                                product.dataQuality === "high"
+                                  ? "border-green-600 text-green-400"
+                                  : product.dataQuality === "medium"
+                                  ? "border-yellow-600 text-yellow-400"
+                                  : "border-slate-600 text-slate-400"
+                              }
+                            >
+                              {product.dataQuality || "unknown"}
+                            </Badge>
                           </div>
 
                           {/* Actions */}
-                          <div className="flex items-center gap-2 mt-3">
+                          <div className="flex items-center gap-2 mt-4">
+                            <Button
+                              size="sm"
+                              className="bg-yellow-600 hover:bg-yellow-700 text-white"
+                              onClick={() => {
+                                toast({
+                                  title: "Coming soon!",
+                                  description: "Video generation will be available in the next update.",
+                                });
+                              }}
+                            >
+                              <Video className="w-4 h-4 mr-2" />
+                              Generate Video
+                            </Button>
                             <Button
                               size="sm"
                               variant="outline"
@@ -374,25 +456,24 @@ export default function AutopilotPage() {
                               className="border-slate-600 text-slate-300"
                             >
                               <ExternalLink className="w-4 h-4 mr-1" />
-                              View Source
+                              Source
                             </Button>
                             <Button
                               size="sm"
-                              variant="outline"
+                              variant="ghost"
                               onClick={() => deleteGenericMutation.mutate(product.id)}
                               disabled={deleteGenericMutation.isPending}
-                              className="border-red-800 text-red-400 hover:bg-red-950"
+                              className="text-red-400 hover:text-red-300 hover:bg-red-950/50"
                             >
-                              <Trash2 className="w-4 h-4 mr-1" />
-                              Delete
+                              <Trash2 className="w-4 h-4" />
                             </Button>
                           </div>
 
                           {/* Quality flags */}
                           {product.qualityFlags && product.qualityFlags.length > 0 && (
                             <div className="flex items-center gap-2 mt-3">
-                              <AlertCircle className="w-4 h-4 text-yellow-500" />
-                              <span className="text-xs text-yellow-500">
+                              <AlertCircle className="w-4 h-4 text-amber-500" />
+                              <span className="text-xs text-amber-500">
                                 {product.qualityFlags.join(", ")}
                               </span>
                             </div>
@@ -404,6 +485,34 @@ export default function AutopilotPage() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Next Steps Card - Show when products exist */}
+            {genericProducts.length > 0 && (
+              <Card className="bg-gradient-to-br from-yellow-900/20 to-orange-900/20 border-yellow-700/50">
+                <CardContent className="py-6">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-yellow-600/20 flex items-center justify-center">
+                      <Sparkles className="w-6 h-6 text-yellow-400" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-white font-medium">Ready to create your first video?</h3>
+                      <p className="text-slate-400 text-sm mt-1">
+                        Click "Generate Video" on any product above to create a 60-second AI demo video.
+                      </p>
+                    </div>
+                    <Button className="bg-yellow-600 hover:bg-yellow-700" onClick={() => {
+                      toast({
+                        title: "Coming soon!",
+                        description: "Video generation will be available in the next update.",
+                      });
+                    }}>
+                      <Video className="w-4 h-4 mr-2" />
+                      Generate First Video
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
 
           {/* ==================== SHOPIFY MODE ==================== */}

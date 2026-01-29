@@ -83,6 +83,24 @@ const IMAGE_EXCLUDE_PATTERNS = [
   /woocommerce.*placeholder/i, // WooCommerce placeholder images only
   /wp-content\/plugins/i,
   /wp-content\/themes\/.*\/(images|assets|icons)/i, // Theme assets, not product images
+  // Supplement/nutrition labels - not the main product image
+  /supplement[-_]?facts/i,
+  /nutrition[-_]?facts/i,
+  /nutrition[-_]?label/i,
+  /ingredients[-_]?label/i,
+  /label[-_]?image/i,
+  /drug[-_]?facts/i,
+];
+
+// Patterns that indicate a GOOD product image (prioritize these)
+const IMAGE_PRIORITY_PATTERNS = [
+  /product/i,
+  /main/i,
+  /hero/i,
+  /featured/i,
+  /primary/i,
+  /-1\./i,  // Often the first/main image
+  /_1\./i,
 ];
 
 // Text patterns to ignore in descriptions
@@ -373,15 +391,17 @@ function collectImages(
 }
 
 /**
- * Filter out non-product images and deduplicate
+ * Filter out non-product images, deduplicate, and prioritize product images
  */
 function filterAndDeduplicateImages(images: string[]): string[] {
   const seen = new Set<string>();
-  const filtered: string[] = [];
+  const priorityImages: string[] = [];
+  const regularImages: string[] = [];
 
   for (const url of images) {
     // Skip if matches exclude pattern
     if (IMAGE_EXCLUDE_PATTERNS.some(pattern => pattern.test(url))) {
+      console.log(`[Normalizer] Excluded image: ${url.substring(0, 80)}...`);
       continue;
     }
 
@@ -390,11 +410,18 @@ function filterAndDeduplicateImages(images: string[]): string[] {
 
     if (!seen.has(normalizedUrl)) {
       seen.add(normalizedUrl);
-      filtered.push(url); // Keep original URL
+
+      // Check if this is a priority (main product) image
+      if (IMAGE_PRIORITY_PATTERNS.some(pattern => pattern.test(url))) {
+        priorityImages.push(url);
+      } else {
+        regularImages.push(url);
+      }
     }
   }
 
-  return filtered;
+  // Return priority images first, then regular images
+  return [...priorityImages, ...regularImages];
 }
 
 /**
@@ -628,16 +655,38 @@ function formatPrice(price: number | string, currency?: string): string {
  * Extract price from text content
  */
 function extractPriceFromText(text: string): string | null {
-  // Match common price patterns
-  const priceMatch = text.match(/\$\d+(?:\.\d{2})?/);
-  if (priceMatch) {
-    return priceMatch[0];
+  // Skip prices that appear in promotional/shipping text
+  const skipPatterns = [
+    /free shipping over \$\d+/i,
+    /orders over \$\d+/i,
+    /save \$\d+/i,
+    /up to \$\d+/i,
+    /\$\d+ off/i,
+    /\$\d+ minimum/i,
+  ];
+
+  // Remove promotional text first
+  let cleanText = text;
+  for (const pattern of skipPatterns) {
+    cleanText = cleanText.replace(pattern, '');
   }
 
-  // Match "Price: X" pattern
-  const labeledMatch = text.match(/(?:Price|Cost):\s*\$?(\d+(?:\.\d{2})?)/i);
+  // Match "Price: $X" pattern first (most reliable)
+  const labeledMatch = cleanText.match(/(?:Price|Cost|Now|Sale)[\s:]*\$(\d+(?:\.\d{2})?)/i);
   if (labeledMatch) {
     return `$${labeledMatch[1]}`;
+  }
+
+  // Look for prices with cents (more likely to be product prices)
+  const priceWithCents = cleanText.match(/\$(\d{1,3}(?:\.\d{2}))/);
+  if (priceWithCents) {
+    return priceWithCents[0];
+  }
+
+  // Fallback: any price pattern
+  const priceMatch = cleanText.match(/\$(\d+(?:\.\d{2})?)/);
+  if (priceMatch) {
+    return priceMatch[0];
   }
 
   return null;
