@@ -191,12 +191,17 @@ export async function normalizeProduct(
     console.log(`[Normalizer] Title: "${title}" (from ${extractionSource.titleFrom})`);
 
     // ==================== IMAGE EXTRACTION ====================
+    // Get OG image first - this is the official product image and should always be first
+    const ogImage = og.image || og['og:image'] || null;
+    console.log(`[Normalizer] OG image: ${ogImage || 'NONE'}`);
+
     const allImages = collectImages(crawlData, og, jsonLd);
     extractionSource.imageCountRaw = allImages.length;
 
     console.log(`[Normalizer] Raw images collected: ${allImages.length}`);
 
-    const filteredImages = filterAndDeduplicateImages(allImages);
+    // Pass OG image to ensure it stays first
+    const filteredImages = filterAndDeduplicateImages(allImages, ogImage);
     extractionSource.imageCountFinal = filteredImages.length;
 
     console.log(`[Normalizer] Filtered images: ${filteredImages.length}`);
@@ -417,9 +422,27 @@ function collectImages(
 
 /**
  * Filter out non-product images, deduplicate, and prioritize product images
+ * OG image is ALWAYS kept first since it's the official product image from the website
  */
-function filterAndDeduplicateImages(images: string[]): string[] {
+function filterAndDeduplicateImages(images: string[], ogImage: string | null): string[] {
   const seen = new Set<string>();
+  const result: string[] = [];
+
+  // FIRST: Add OG image if valid (always position 0)
+  if (ogImage) {
+    const ogNormalized = normalizeImageUrl(ogImage);
+    const ogExcluded = IMAGE_EXCLUDE_PATTERNS.some(pattern => pattern.test(ogImage));
+
+    if (!ogExcluded) {
+      result.push(ogImage);
+      seen.add(ogNormalized);
+      console.log(`[Normalizer] OG image kept as primary: ${ogImage.substring(0, 80)}...`);
+    } else {
+      console.log(`[Normalizer] OG image excluded by pattern: ${ogImage.substring(0, 80)}...`);
+    }
+  }
+
+  // THEN: Process remaining images
   const priorityImages: string[] = [];
   const regularImages: string[] = [];
 
@@ -445,8 +468,8 @@ function filterAndDeduplicateImages(images: string[]): string[] {
     }
   }
 
-  // Return priority images first, then regular images
-  return [...priorityImages, ...regularImages];
+  // Return: OG image first, then priority images, then regular images
+  return [...result, ...priorityImages, ...regularImages];
 }
 
 /**
