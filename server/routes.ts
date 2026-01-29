@@ -4390,10 +4390,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Validate URL format
+      let parsedUrl: URL;
       try {
-        new URL(url);
+        parsedUrl = new URL(url);
       } catch {
         return res.status(400).json({ error: 'Invalid URL format' });
+      }
+
+      // Reject homepage URLs - we need a specific product page
+      const path = parsedUrl.pathname.toLowerCase();
+      const isHomepage = path === '/' || path === '' || path === '/home' || path === '/index.html' || path === '/index.php';
+      if (isHomepage) {
+        return res.status(400).json({
+          error: 'Please provide a specific product page URL, not the homepage',
+          details: 'The URL should point to a single product, like: https://example.com/product/product-name',
+        });
+      }
+
+      // Check for common product URL patterns
+      const productPatterns = ['/product/', '/products/', '/shop/', '/item/', '/p/', '/buy/'];
+      const looksLikeProduct = productPatterns.some(pattern => path.includes(pattern)) || path.split('/').length >= 3;
+
+      if (!looksLikeProduct) {
+        console.log(`[Generic Ingest API] Warning: URL may not be a product page: ${url}`);
       }
 
       console.log(`[Generic Ingest API] Starting ingestion for: ${url} (user: ${userId})`);

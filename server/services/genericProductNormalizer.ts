@@ -255,22 +255,36 @@ export async function normalizeProduct(
     let price: string | null = null;
     let originalPrice: string | null = null;
 
+    // Priority 1: JSON-LD offers (most reliable)
     if (jsonLd?.offers) {
       const offers = Array.isArray(jsonLd.offers) ? jsonLd.offers[0] : jsonLd.offers;
+      console.log(`[Normalizer] JSON-LD offers found:`, JSON.stringify(offers).substring(0, 200));
       if (offers?.price) {
         price = formatPrice(offers.price, offers.priceCurrency);
+        console.log(`[Normalizer] Price from JSON-LD: ${price}`);
       }
       if (offers?.highPrice && offers.highPrice !== offers.price) {
         originalPrice = formatPrice(offers.highPrice, offers.priceCurrency);
       }
+    } else {
+      console.log(`[Normalizer] No JSON-LD offers found`);
     }
 
-    // Try to extract from text if not in JSON-LD
+    // Priority 2: OpenGraph price (some sites use this)
+    if (!price && og['price:amount']) {
+      price = formatPrice(og['price:amount'], og['price:currency'] || 'USD');
+      console.log(`[Normalizer] Price from OG tags: ${price}`);
+    }
+
+    // Priority 3: Extract from text (least reliable)
     if (!price && crawlData.text) {
       price = extractPriceFromText(crawlData.text);
+      if (price) {
+        console.log(`[Normalizer] Price from text extraction: ${price}`);
+      }
     }
 
-    console.log(`[Normalizer] Price: ${price || 'not found'}`);
+    console.log(`[Normalizer] Final price: ${price || 'not found'}`);
 
     // ==================== BRAND EXTRACTION ====================
     let brand: string | null = null;
