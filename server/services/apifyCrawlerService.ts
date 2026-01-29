@@ -47,8 +47,8 @@ export interface ApifyCrawlResponse {
 const APIFY_API_TOKEN = process.env.APIFY_API_KEY || process.env.APIFY_API_TOKEN;
 const APIFY_BASE_URL = 'https://api.apify.com/v2';
 
-// Website Content Crawler actor ID
-const WEBSITE_CONTENT_CRAWLER_ACTOR_ID = 'apify/website-content-crawler';
+// Website Content Crawler actor ID (use tilde format for Apify API)
+const WEBSITE_CONTENT_CRAWLER_ACTOR_ID = 'apify~website-content-crawler';
 
 // Polling configuration
 const POLL_INTERVAL_MS = 3000; // 3 seconds
