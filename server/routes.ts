@@ -4562,6 +4562,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  /**
+   * POST /api/autopilot/products/generic/:productId/generate-video - Generate video for generic product
+   * This endpoint enables video generation for products imported from any URL (non-Shopify)
+   */
+  app.post("/api/autopilot/products/generic/:productId/generate-video", requireAuth, async (req, res) => {
+    try {
+      const userId = req.userId!;
+      const { productId } = req.params;
+
+      console.log(`[Generic Video API] Starting video generation for product ${productId} (user: ${userId})`);
+
+      // 1. Fetch product from database
+      const product = await genericProductService.getGenericProduct(productId, userId);
+
+      if (!product) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
+
+      // 2. Validate minimum requirements for video generation
+      if (!product.images || product.images.length < 2) {
+        return res.status(400).json({
+          error: 'Product needs at least 2 images for video generation',
+          currentImages: product.images?.length || 0,
+        });
+      }
+
+      if (!product.title || product.title.length < 3) {
+        return res.status(400).json({
+          error: 'Product needs a valid title for video generation',
+        });
+      }
+
+      // 3. Prepare video params
+      const videoParams = {
+        userId,
+        productName: product.title,
+        productFeatures: product.description || product.title,
+        productImages: product.images.slice(0, 4), // Max 4 images
+        price: product.price || '',
+        originalPrice: product.originalPrice || undefined,
+        // Use first benefit as hook if available
+        hookText: product.benefits && product.benefits.length > 0
+          ? product.benefits[0]
+          : undefined,
+        tone: 'casual' as const,
+      };
+
+      console.log(`[Generic Video API] Generating video for "${product.title}" with ${videoParams.productImages.length} images`);
+
+      // 4. Generate video
+      const result = await autopilotVideoService.generateAutopilotVideo(videoParams);
+
+      if (!result.success) {
+        console.error(`[Generic Video API] Video generation failed:`, result.error);
+        return res.status(500).json({
+          error: 'Video generation failed',
+          details: result.error,
+        });
+      }
+
+      console.log(`[Generic Video API] Video generation started, assetId: ${result.assetId}`);
+
+      return res.status(202).json({
+        success: true,
+        assetId: result.assetId,
+        message: 'Video generation started',
+        productTitle: product.title,
+      });
+    } catch (error: any) {
+      console.error('[Generic Video API] Unexpected error:', error);
+      return res.status(500).json({
+        error: 'Internal server error',
+        details: error.message,
+      });
+    }
+  });
+
   // ----------------------------------------
   // SHOPIFY STORE INGESTION (Original Flow)
   // ----------------------------------------

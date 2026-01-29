@@ -55,22 +55,19 @@ const MIN_DESCRIPTION_LENGTH = 50;
 const MAX_DESCRIPTION_LENGTH = 300;
 const MAX_TITLE_LENGTH = 80;
 
-// Patterns to filter out non-product images
-const IMAGE_EXCLUDE_PATTERNS = [
+// Patterns to filter out non-product images (STRICT filtering)
+// These patterns are intentionally conservative - OG image bypasses these entirely
+const IMAGE_EXCLUDE_PATTERNS_STRICT = [
   /\.svg$/i,
   /\.gif$/i,
-  /icon/i,
-  /logo/i,
   /badge/i,
   /payment/i,
   /trust/i,
   /shipping/i,
   /sprite/i,
   /placeholder/i,
-  /\/assets\//i,
   /\/icons\//i,
   /\/ui\//i,
-  /\/static\/.*\.(png|jpg)/i,
   /data:image\//i,
   /gravatar/i,
   /avatar/i,
@@ -83,13 +80,26 @@ const IMAGE_EXCLUDE_PATTERNS = [
   /woocommerce.*placeholder/i, // WooCommerce placeholder images only
   /wp-content\/plugins/i,
   /wp-content\/themes\/.*\/(images|assets|icons)/i, // Theme assets, not product images
-  // Supplement/nutrition labels - not the main product image
-  /supplement[-_]?facts/i,
-  /nutrition[-_]?facts/i,
+  // Supplement/nutrition labels - narrowed to only match actual label images
+  /supplement[-_]?facts[-_]?(label|image|sheet)/i,
+  /nutrition[-_]?facts[-_]?(label|image|sheet)/i,
   /nutrition[-_]?label/i,
   /ingredients[-_]?label/i,
   /label[-_]?image/i,
   /drug[-_]?facts/i,
+];
+
+// RELAXED patterns - only the most essential exclusions
+// Used as fallback when strict filtering leaves < 3 images
+const IMAGE_EXCLUDE_PATTERNS_RELAXED = [
+  /\.svg$/i,
+  /\.gif$/i,
+  /data:image\//i,
+  /1x1/i,       // Tracking pixels
+  /pixel/i,    // Tracking pixels
+  /spacer/i,   // Spacer images
+  /gravatar/i,
+  /avatar/i,
 ];
 
 // Patterns that indicate a GOOD product image (prioritize these)
@@ -421,55 +431,89 @@ function collectImages(
 }
 
 /**
- * Filter out non-product images, deduplicate, and prioritize product images
- * OG image is ALWAYS kept first since it's the official product image from the website
+ * Filter images with strict rules (default)
  */
-function filterAndDeduplicateImages(images: string[], ogImage: string | null): string[] {
+function filterImagesStrict(images: string[], ogImage: string | null): string[] {
+  return filterImagesWithPatterns(images, ogImage, IMAGE_EXCLUDE_PATTERNS_STRICT);
+}
+
+/**
+ * Filter images with relaxed rules (fallback when too few images)
+ */
+function filterImagesRelaxed(images: string[], ogImage: string | null): string[] {
+  return filterImagesWithPatterns(images, ogImage, IMAGE_EXCLUDE_PATTERNS_RELAXED);
+}
+
+/**
+ * Filter images using provided exclusion patterns
+ * OG image is NEVER excluded - it's the website owner's chosen product image
+ */
+function filterImagesWithPatterns(
+  images: string[],
+  ogImage: string | null,
+  excludePatterns: RegExp[]
+): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
 
-  // FIRST: Add OG image if valid (always position 0)
+  // FIRST: Add OG image if valid - NEVER EXCLUDE IT
   if (ogImage) {
     const ogNormalized = normalizeImageUrl(ogImage);
-    const ogExcluded = IMAGE_EXCLUDE_PATTERNS.some(pattern => pattern.test(ogImage));
-
-    if (!ogExcluded) {
-      result.push(ogImage);
-      seen.add(ogNormalized);
-      console.log(`[Normalizer] OG image kept as primary: ${ogImage.substring(0, 80)}...`);
-    } else {
-      console.log(`[Normalizer] OG image excluded by pattern: ${ogImage.substring(0, 80)}...`);
-    }
+    result.push(ogImage);
+    seen.add(ogNormalized);
+    console.log(`[Normalizer] OG image ALWAYS kept as primary: ${ogImage.substring(0, 80)}...`);
   }
 
-  // THEN: Process remaining images
+  // THEN: Process remaining images with filtering
   const priorityImages: string[] = [];
   const regularImages: string[] = [];
 
   for (const url of images) {
+    // Normalize URL for deduplication (remove size params)
+    const normalizedUrl = normalizeImageUrl(url);
+
+    // Skip if already seen (including OG image)
+    if (seen.has(normalizedUrl)) {
+      continue;
+    }
+
     // Skip if matches exclude pattern
-    if (IMAGE_EXCLUDE_PATTERNS.some(pattern => pattern.test(url))) {
+    if (excludePatterns.some(pattern => pattern.test(url))) {
       console.log(`[Normalizer] Excluded image: ${url.substring(0, 80)}...`);
       continue;
     }
 
-    // Normalize URL for deduplication (remove size params)
-    const normalizedUrl = normalizeImageUrl(url);
+    seen.add(normalizedUrl);
 
-    if (!seen.has(normalizedUrl)) {
-      seen.add(normalizedUrl);
-
-      // Check if this is a priority (main product) image
-      if (IMAGE_PRIORITY_PATTERNS.some(pattern => pattern.test(url))) {
-        priorityImages.push(url);
-      } else {
-        regularImages.push(url);
-      }
+    // Check if this is a priority (main product) image
+    if (IMAGE_PRIORITY_PATTERNS.some(pattern => pattern.test(url))) {
+      priorityImages.push(url);
+    } else {
+      regularImages.push(url);
     }
   }
 
   // Return: OG image first, then priority images, then regular images
   return [...result, ...priorityImages, ...regularImages];
+}
+
+/**
+ * Filter out non-product images, deduplicate, and prioritize product images
+ * Uses adaptive filtering: strict first, relaxed if too few images remain
+ * OG image is ALWAYS kept first since it's the official product image from the website
+ */
+function filterAndDeduplicateImages(images: string[], ogImage: string | null): string[] {
+  // First try with strict filtering
+  let filtered = filterImagesStrict(images, ogImage);
+
+  // Adaptive fallback: if too few images, relax filtering
+  if (filtered.length < 3) {
+    console.log(`[Normalizer] Too few images (${filtered.length}), relaxing filters...`);
+    filtered = filterImagesRelaxed(images, ogImage);
+    console.log(`[Normalizer] After relaxed filtering: ${filtered.length} images`);
+  }
+
+  return filtered;
 }
 
 /**

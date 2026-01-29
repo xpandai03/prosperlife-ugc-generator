@@ -218,6 +218,35 @@ export default function AutopilotPage() {
     },
   });
 
+  // Generate video for generic product
+  const generateVideoMutation = useMutation({
+    mutationFn: async (productId: string) => {
+      const authHeaders = await getAuthHeaders();
+      const response = await fetch(`/api/autopilot/products/generic/${productId}/generate-video`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.details || error.error || "Failed to generate video");
+      }
+      return response.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Video generation started!",
+        description: `Your video for "${data.productTitle}" is being created. Check your videos page for status.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Generation failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   // Shopify store scrape
   const shopifyScrapeMutation = useMutation({
     mutationFn: async (url: string) => {
@@ -439,16 +468,21 @@ export default function AutopilotPage() {
                             <Button
                               size="sm"
                               className="bg-yellow-600 hover:bg-yellow-700 text-white"
-                              onClick={() => {
-                                toast({
-                                  title: "Coming soon!",
-                                  description: "Video generation will be available in the next update.",
-                                });
-                              }}
+                              disabled={product.images.length < 2 || generateVideoMutation.isPending}
+                              onClick={() => generateVideoMutation.mutate(product.id)}
                             >
-                              <Video className="w-4 h-4 mr-2" />
+                              {generateVideoMutation.isPending ? (
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              ) : (
+                                <Video className="w-4 h-4 mr-2" />
+                              )}
                               Generate Video
                             </Button>
+                            {product.images.length < 2 && (
+                              <span className="text-xs text-red-400">
+                                Needs at least 2 images
+                              </span>
+                            )}
                             <Button
                               size="sm"
                               variant="outline"
@@ -500,13 +534,22 @@ export default function AutopilotPage() {
                         Click "Generate Video" on any product above to create a 60-second AI demo video.
                       </p>
                     </div>
-                    <Button className="bg-yellow-600 hover:bg-yellow-700" onClick={() => {
-                      toast({
-                        title: "Coming soon!",
-                        description: "Video generation will be available in the next update.",
-                      });
-                    }}>
-                      <Video className="w-4 h-4 mr-2" />
+                    <Button
+                      className="bg-yellow-600 hover:bg-yellow-700"
+                      disabled={!genericProducts.some(p => p.images.length >= 2) || generateVideoMutation.isPending}
+                      onClick={() => {
+                        // Find first product with enough images
+                        const eligibleProduct = genericProducts.find(p => p.images.length >= 2);
+                        if (eligibleProduct) {
+                          generateVideoMutation.mutate(eligibleProduct.id);
+                        }
+                      }}
+                    >
+                      {generateVideoMutation.isPending ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Video className="w-4 h-4 mr-2" />
+                      )}
                       Generate First Video
                     </Button>
                   </div>
