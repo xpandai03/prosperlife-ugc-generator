@@ -49,7 +49,7 @@ export interface NormalizationResult {
 
 // ==================== CONFIG ====================
 
-const MIN_IMAGE_COUNT = 3;
+const MIN_IMAGE_COUNT = 1; // MVP: Allow products with just 1 image
 const MAX_IMAGE_COUNT = 5;
 const MIN_DESCRIPTION_LENGTH = 50;
 const MAX_DESCRIPTION_LENGTH = 300;
@@ -80,8 +80,9 @@ const IMAGE_EXCLUDE_PATTERNS = [
   /pinterest\.com/i,
   /google\.com\/.*\.(png|jpg|svg)/i,
   /cdn\.shopify\.com\/.*\/files\//i, // Shopify misc files
-  /woocommerce/i,
+  /woocommerce.*placeholder/i, // WooCommerce placeholder images only
   /wp-content\/plugins/i,
+  /wp-content\/themes\/.*\/(images|assets|icons)/i, // Theme assets, not product images
 ];
 
 // Text patterns to ignore in descriptions
