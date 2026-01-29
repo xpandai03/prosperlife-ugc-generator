@@ -477,9 +477,10 @@ function normalizeImageUrl(url: string): string {
 function cleanTitle(raw: string): string {
   let title = raw.trim();
 
-  // Remove common suffixes
-  title = title.replace(/\s*[-|–—]\s*(Shop|Store|Buy|Official|Home).*$/i, '');
-  title = title.replace(/\s*[-|–—]\s*[^-|–—]+$/, ''); // Remove site name after separator
+  // Remove common site name suffixes (require space before separator to avoid matching product names like "B-Complex")
+  // Match patterns like " - Site Name" or " | Site Name" at the end
+  title = title.replace(/\s+[-|–—]\s+(Shop|Store|Buy|Official|Home).*$/i, '');
+  title = title.replace(/\s+[-|–—]\s+[A-Z][a-zA-Z\s]+$/,  ''); // " - Site Name" pattern (capitalized word)
 
   // Remove common prefixes
   title = title.replace(/^(Buy|Shop|Order)\s+/i, '');
